@@ -79,29 +79,32 @@ Follow the instructions in the [official WebView2 docs](https://docs.microsoft.c
 
 To summarize:
 
-- Visual Studio 2015 or later
-- Windows 7, 8.1, 10
+- Visual Studio 2019 or later
+- Windows versions supported by the installed [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)
 - Microsoft Edge (Chromium)
-  - Install a non-stable channel (Beta, Dev, or Canary) or the [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section)
+  - Install the [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section) or a Microsoft Edge installation that provides the runtime
 - Add the following NuGet packages to the solution:
   - [Microsoft.Windows.ImplementationLibrary](https://www.nuget.org/packages/Microsoft.Windows.ImplementationLibrary/)
   - [Microsoft.Web.WebView2](https://www.nuget.org/packages/Microsoft.Web.WebView2)
+
+The CMake configuration selects the WebView2 loader matching the target architecture. To generate a 32-bit Visual Studio build, pass `-A Win32`; for 64-bit, pass `-A x64`.
 
 <details><summary><strong>Build with cl.exe (Edge Chromium)</strong></summary>
 
 To use `cl.exe` directly, you'd need to grab the NuGet packages manually.
 
 1. Download / clone this repo and navigate to it.
-2. Make sure you have the new Edge installed (beta, dev, or canary) or the runtime.
+2. Make sure the WebView2 Runtime is installed.
 3. Get the WebView2 package and the Windows Implementation Libraries (WIL) package either by using the [NuGet CLI](https://www.nuget.org/downloads) or downloading them from the NuGet website.
-   - From WebView2, you need the following files:
-     - `.\build\native\include\WebView2.h`
-     - `.\build\native\x86\WebView2LoaderStatic.lib`.
-     - For dynamic linking, use `WebView2Loader.dll.lib` and make sure `WebView2Loader.dll` is located with your executable when running.
+   - From WebView2, use the headers in `.\build\native\include` and the loader files under the folder matching your target architecture: `x86`, `x64`, or `arm64`.
+     - For static linking, use that folder's `WebView2LoaderStatic.lib`.
+     - For dynamic linking, use `WebView2Loader.dll.lib` and place the matching `WebView2Loader.dll` beside the executable when running.
    - From WIL, you need `.\include\wil\`.
-4. Compile by running `cl main.cpp /DWEBVIEW_EDGE /EHsc /std:c++17 /link WebView2LoaderStatic.lib version.lib`.
+4. Compile by running `cl main.cpp /DWEBVIEW_EDGE /EHsc /std:c++17 /link WebView2LoaderStatic.lib version.lib`, using the loader library for the selected target architecture.
 
 </details>
+
+WebView2 background colors support only fully transparent (`a = 0`) or fully opaque (`a = 255`) alpha; intermediate alpha values are treated as opaque.
 
 ## MSHTML (Internet Explorer)
 

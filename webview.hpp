@@ -25,6 +25,7 @@
 
 // Headers
 #include <functional>
+#include <iterator>
 #include <string>
 
 #if defined(WEBVIEW_MSHTML)
@@ -134,6 +135,20 @@ public:
           debug(debug_),
           title(title_),
           url(url_) {}
+    ~WebView() {
+#if defined(WEBVIEW_EDGE)
+        if (webviewController) webviewController->Close();
+        webviewWindow.reset();
+        webviewController.reset();
+        if (hwnd && IsWindow(hwnd)) {
+            DestroyWindow(hwnd);
+        }
+        if (webviewComInitialized) {
+            webviewComInitialized = false;
+            CoUninitialize();
+        }
+#endif
+    }
     int init();                            // Initialize webview
     void setCallback(jscb callback);       // JS callback
     void setTitle(String t);               // Set title of window
@@ -193,6 +208,9 @@ private:
     wil::com_ptr<ICoreWebView2Controller>
         webviewController;                      // Pointer to WebViewController
     wil::com_ptr<ICoreWebView2> webviewWindow;  // Pointer to WebView window
+    bool webviewComInitialized = false;
+    bool firstNavigationCompleted = false;
+    std::wstring pendingEval;
 #elif defined(WEBVIEW_MSHTML)
     String inject = Str(
         "if(!window.__webviewInjected){window.external={invoke:function(arg){document.title='__webview:'+encodeURIComponent(arg)}};window.__webviewInjected=true;}");
@@ -444,6 +462,14 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 w->resize();
             }
             return DefWindowProc(hwnd, msg, wparam, lparam);
+#if defined(WEBVIEW_EDGE)
+        case WM_MOVE:
+        case WM_MOVING:
+            if (w != nullptr && w->webviewController) {
+                w->webviewController->NotifyParentWindowPositionChanged();
+            }
+            return DefWindowProc(hwnd, msg, wparam, lparam);
+#endif
 #if defined(WEBVIEW_MSHTML)
         case WM_TIMER:
             if (w != nullptr && w->init_done && w->mshtmlBrowser) {
@@ -658,6 +684,7 @@ int WebView::init() {
     if (FAILED(inithr)) {
         return -1;
     }
+    webviewComInitialized = true;
 
     auto onWebMessageReceieved =
         [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
@@ -671,8 +698,8 @@ int WebView::init() {
                 }
 
                 std::wstring message(messageRaw);
-                js_callback(*this, message);
                 CoTaskMemFree(messageRaw);
+                js_callback(*this, message);
             }
             return S_OK;
         };
@@ -680,35 +707,54 @@ int WebView::init() {
     auto onWebViewControllerCreate =
         [this, onWebMessageReceieved](
             HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
-        if (FAILED(result)) {
-            return result;
+        if (FAILED(result) || controller == nullptr) {
+            MessageBox(hwnd, L"Could not create the WebView2 controller.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return FAILED(result) ? result : E_FAIL;
         }
 
-        if (controller != nullptr) {
-            webviewController = controller;
-            webviewController->get_CoreWebView2(&webviewWindow);
+        webviewController = controller;
+        HRESULT hr = webviewController->get_CoreWebView2(&webviewWindow);
+        if (FAILED(hr) || !webviewWindow) {
+            MessageBox(hwnd, L"Could not initialize the WebView2 control.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return FAILED(hr) ? hr : E_FAIL;
         }
 
         wil::com_ptr<ICoreWebView2Settings> settings;
-        webviewWindow->get_Settings(&settings);
-        if (!debug) {
-            settings->put_AreDevToolsEnabled(FALSE);
+        hr = webviewWindow->get_Settings(&settings);
+        if (FAILED(hr) || !settings) {
+            MessageBox(hwnd, L"Could not read WebView2 settings.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+        if (!debug && FAILED(settings->put_AreDevToolsEnabled(FALSE))) {
+            MessageBox(hwnd, L"Could not configure WebView2 settings.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return E_FAIL;
         }
 
         // Resize WebView
         resize();
 
-        webviewWindow->AddScriptToExecuteOnDocumentCreated(inject.c_str(),
-                                                           nullptr);
-
-        webviewWindow->add_WebMessageReceived(
+        hr = webviewWindow->add_WebMessageReceived(
             Callback<ICoreWebView2WebMessageReceivedEventHandler>(
                 onWebMessageReceieved)
                 .Get(),
             nullptr);
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not connect WebView2 messages.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
 
         // Detect fullscreen change from JS
-        webviewWindow->add_ContainsFullScreenElementChanged(
+        hr = webviewWindow->add_ContainsFullScreenElementChanged(
             Callback<ICoreWebView2ContainsFullScreenElementChangedEventHandler>(
                 [this](ICoreWebView2*, IUnknown*) {
                     if (fullscreenFromJS) {
@@ -722,16 +768,66 @@ int WebView::init() {
                 })
                 .Get(),
             nullptr);
-
-        // Done initialization, set properties
-        init_done = true;
-
-        setTitle(title);
-        if (fullscreen) {
-            setFullscreen(true);
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not connect WebView2 events.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
         }
-        setBgColor(bgR, bgG, bgB, bgA);
-        navigate(url);
+
+        hr = webviewWindow->add_NavigationCompleted(
+            Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2NavigationCompletedEventArgs* args) {
+                    BOOL succeeded = FALSE;
+                    if (args && SUCCEEDED(args->get_IsSuccess(&succeeded)) &&
+                        succeeded) {
+                        firstNavigationCompleted = true;
+                        if (!pendingEval.empty()) {
+                            auto scripts = std::move(pendingEval);
+                            pendingEval.clear();
+                            eval(scripts);
+                        }
+                    }
+                    return S_OK;
+                })
+                .Get(),
+            nullptr);
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not connect WebView2 navigation events.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
+
+        // Document-start script registration is asynchronous. Navigate only
+        // after the completion callback confirms that it is ready.
+        hr = webviewWindow->AddScriptToExecuteOnDocumentCreated(
+            inject.c_str(),
+            Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+                [this](HRESULT scriptResult, LPCWSTR) -> HRESULT {
+                    if (FAILED(scriptResult)) {
+                        MessageBox(hwnd,
+                                   L"Could not register the WebView2 startup script.",
+                                   L"WebView2 error", MB_ICONERROR | MB_OK);
+                        PostMessage(hwnd, WM_CLOSE, 0, 0);
+                        return scriptResult;
+                    }
+
+                    init_done = true;
+                    setTitle(title);
+                    if (fullscreen) setFullscreen(true);
+                    setBgColor(bgR, bgG, bgB, bgA);
+                    navigate(url);
+                    return S_OK;
+                })
+                .Get());
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not register the WebView2 startup script.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
 
         return S_OK;
     };
@@ -739,47 +835,70 @@ int WebView::init() {
     auto onCreateEnvironment = [this, onWebViewControllerCreate](
                                    HRESULT result,
                                    ICoreWebView2Environment* env) -> HRESULT {
-        if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) {
-            MessageBox(nullptr, L"Could not find Edge installation.", L"Error!",
-                       NULL);
-            return result;
+        if (FAILED(result) || env == nullptr) {
+            const wchar_t* message =
+                result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+                    ? L"Could not find the WebView2 Runtime."
+                    : L"Could not create the WebView2 environment.";
+            MessageBox(hwnd, message, L"WebView2 error",
+                       MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return FAILED(result) ? result : E_FAIL;
         }
 
-        // Create Webview2 controller
-        return env->CreateCoreWebView2Controller(
+        HRESULT hr = env->CreateCoreWebView2Controller(
             hwnd,
             Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                 onWebViewControllerCreate)
                 .Get());
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not start WebView2 controller creation.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+        }
+        return hr;
     };
 
-    // Get APPDATA path
-    PCWSTR userDataFolderPtr = nullptr;
+    // Use a writable, machine-local profile directory. APPDATA can be
+    // redirected to a network or roaming profile.
     std::wstring userDataFolder;
-
-    DWORD bufferLength = 32767;
-    std::wstring appdataPath;
-    appdataPath.resize(bufferLength);
-    bufferLength = GetEnvironmentVariable(Str("APPDATA"), appdataPath.data(),
-                                          bufferLength);
-    if (bufferLength) {
-        appdataPath.resize(bufferLength);
-
-        // Get executable file name
-        wchar_t exePath[MAX_PATH];
-        GetModuleFileName(NULL, exePath, MAX_PATH);
-        userDataFolder = (appdataPath + Str("/") + PathFindFileName(exePath));
-        userDataFolderPtr = userDataFolder.c_str();
+    DWORD bufferLength = GetEnvironmentVariable(
+        Str("LOCALAPPDATA"), nullptr, 0);
+    if (bufferLength > 1) {
+        std::wstring localAppData(bufferLength, L'\0');
+        DWORD written = GetEnvironmentVariable(
+            Str("LOCALAPPDATA"), localAppData.data(), bufferLength);
+        if (written > 0 && written < bufferLength) {
+            localAppData.resize(written);
+            wchar_t exePath[32768]{};
+            DWORD exePathLength = GetModuleFileName(
+                nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+            if (exePathLength > 0 &&
+                exePathLength < static_cast<DWORD>(std::size(exePath))) {
+                userDataFolder = localAppData + Str("\\") +
+                                 PathFindFileName(exePath) +
+                                 Str(".WebView2");
+            }
+        }
     }
 
-    // Create WebView2 environment
+    if (userDataFolder.empty()) {
+        MessageBox(hwnd,
+                   L"Could not determine a writable WebView2 profile folder.",
+                   L"WebView2 error", MB_ICONERROR | MB_OK);
+        webviewComInitialized = false;
+        CoUninitialize();
+        return -1;
+    }
+
     auto hr = CreateCoreWebView2EnvironmentWithOptions(
-        nullptr, userDataFolderPtr, nullptr,
+        nullptr, userDataFolder.c_str(), nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             onCreateEnvironment)
             .Get());
 
     if (FAILED(hr)) {
+        webviewComInitialized = false;
         CoUninitialize();
         return -1;
     }
@@ -795,8 +914,15 @@ void WebView::setBgColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
         bgG = g;
         bgB = b;
         bgA = a;
-    } else {
-        // TODO
+        return;
+    }
+
+    wil::com_ptr<ICoreWebView2Controller2> controller2;
+    if (SUCCEEDED(
+            webviewController->QueryInterface(IID_PPV_ARGS(&controller2))) &&
+        controller2) {
+        COREWEBVIEW2_COLOR color{static_cast<BYTE>(a == 0 ? 0 : 255), r, g, b};
+        controller2->put_DefaultBackgroundColor(color);
     }
 }
 
@@ -809,24 +935,19 @@ void WebView::navigate(std::wstring u) {
 }
 
 void WebView::eval(const std::wstring& js) {
-    // Schedule an async task to get the document URL
+    if (!firstNavigationCompleted || !webviewWindow) {
+        pendingEval += js;
+        pendingEval += L"\n";
+        return;
+    }
     webviewWindow->ExecuteScript(
         js.c_str(), Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-                        [](HRESULT, LPCWSTR) -> HRESULT {
-                            // LPCWSTR URL = resultObjectAsJson;
-                            // doSomethingWithURL(URL);
-                            return S_OK;
-                        })
+                        [](HRESULT, LPCWSTR) -> HRESULT { return S_OK; })
                         .Get());
-
-    // if (debug) {
-    // std::cout << winrt::to_string(result) << std::endl;
-    //}
 }
 
 void WebView::exit() {
     PostQuitMessage(WM_QUIT);
-    CoUninitialize();
 }
 
 void WebView::resize() {
