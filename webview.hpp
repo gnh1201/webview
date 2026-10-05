@@ -70,6 +70,8 @@
 #include <wrl.h>
 
 #include <cstdlib>
+#include <memory>
+#include <type_traits>
 #include <utility>
 #elif defined(WEBVIEW_MAC)  // WEBVIEW_EDGE
 #import <Cocoa/Cocoa.h>

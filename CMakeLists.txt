@@ -7,6 +7,14 @@ project(webview
   HOMEPAGE_URL "https://github.com/MichaelKim/webview")
 include(cmake/Settings.cmake)
 
+# CMake's MSVC defaults add /W3 globally. The project sets /W4 on its targets,
+# so remove that default from the consuming directory to avoid D9025.
+if(MSVC AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+	string(REGEX REPLACE "(^| )/W3( |$)" "\\1\\2" CMAKE_CXX_FLAGS
+		"${CMAKE_CXX_FLAGS}")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" PARENT_SCOPE)
+endif()
+
 if(WIN32)
 	option(WEBVIEW_USE_EDGE "Enables Edge Chromium for Windows" ON)
 	option(WEBVIEW_USE_MSHTML "Enables the legacy MSHTML engine for Windows" OFF)
