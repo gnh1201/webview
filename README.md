@@ -34,6 +34,11 @@ Examples are in [`examples/`](examples/):
 
 The local-only setting applies to document navigation, not to resources referenced by the page. Do not treat it as a network sandbox for untrusted HTML.
 
+## TODO
+
+- Add compatibility for the HTA (`.hta`) file format. HTA (HTML Application) files are HTML-based Windows applications, traditionally hosted by `mshta.exe`, and can include an `<HTA:APPLICATION>` element to configure application-window behavior such as its border. Compatibility should account for these application-specific semantics, rather than only opening the file as an ordinary HTML page. HTA content has different security assumptions from normal browser content, so this work must also define and document its security behavior. See Microsoft's documentation for the [`HTA:APPLICATION` element](https://learn.microsoft.com/en-us/previous-versions/ms536476%28v%3Dvs.85%29) and [HTA security model](https://learn.microsoft.com/en-us/openspecs/ie_standards/ms-html401e/1cc72255-6605-4e5a-b401-37da1c365a56).
+- Add support for the inter-process communication (IPC) planned for the WelsonJS project.
+
 ## Usage
 
 Include `webview.hpp` and link/configure the dependencies for the selected backend (see [Build Steps](docs/build.md)). By default, the Windows CMake configuration uses WebView2.
