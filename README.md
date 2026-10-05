@@ -14,11 +14,15 @@ This repository is [forked from MichaelKim/webview](https://github.com/MichaelKi
 
 The macOS WebKit backend was last listed as tested on macOS Mojave and Catalina. The Linux WebKitGTK backend was last listed as tested on Ubuntu 18.04.02 LTS. Neither has been tested against newer releases as part of recent Windows-focused work.
 
+## Shared local-file-only mode
+
+`setLocalFileOnly(true)` is a common feature available in all three Windows backends: MSHTML, EdgeHTML, and WebView2. It is intended for applications that should display local pages rather than external websites, while still allowing those pages to reference external resources such as scripts and stylesheets. Attempts to navigate the main document or a frame to an external site are blocked and show a built-in Forbidden page. This controls page navigation; it is not a network sandbox and does not filter subresource requests.
+
 ## WelsonJS and MSHTML
 
 MSHTML support was added to help [WelsonJS](https://github.com/gnh1201/welsonjs), a lightweight Windows JavaScript framework for application development and industrial-system automation, maintain compatibility with existing industrial systems and their web-based interfaces. WelsonJS applications combine JavaScript (including transpiled languages) with HTML and CSS. The MSHTML backend provides access to the system's Trident engine for environments where compatibility with existing applications and workflows is important.
 
-The MSHTML implementation includes balanced COM/OLE initialization and cleanup, navigation and new-window event handling, defensive initialization and teardown, and JavaScript/native callback support. In local-file-only mode, external document and frame navigation is blocked and displays a built-in Forbidden page; subresource loads such as scripts and stylesheets are not filtered.
+The MSHTML implementation includes balanced COM/OLE initialization and cleanup, navigation and new-window event handling, defensive initialization and teardown, and JavaScript/native callback support.
 
 See [MSHTML build instructions](docs/build.md#mshtml-trident) and the [`mshtml` example](examples/mshtml/).
 
