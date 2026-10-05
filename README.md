@@ -2,7 +2,7 @@
 
 [![CMake CI](https://github.com/MichaelKim/webview/actions/workflows/ci.yaml/badge.svg)](https://github.com/MichaelKim/webview/actions/workflows/ci.yaml)
 
-A tiny cross-platform webview library written in C++ using Edge on Windows (both EdgeHTML and Chromium), Webkit on MacOS, and WebkitGTK on Linux.
+A tiny cross-platform webview library written in C++ using Edge on Windows (EdgeHTML and Chromium) or the legacy MSHTML engine, Webkit on MacOS, and WebkitGTK on Linux.
 
 Inspired from zerge's [webview](https://github.com/webview/webview), this library was rewritten with several priorities:
 
@@ -12,11 +12,11 @@ Inspired from zerge's [webview](https://github.com/webview/webview), this librar
 
 ## Support
 
-|            | Windows            | Windows            | MacOS                            | Linux                         |
-| ---------- | ------------------ | ------------------ | -------------------------------- | ----------------------------- |
-| Version    | Windows 10, v1809+ | Windows 7, 8.1, 10 | Tested on MacOS Mojave, Catalina | Tested on Ubuntu 18.04.02 LTS |
-| Web Engine | EdgeHTML           | Chromium           | Webkit                           | WebKit                        |
-| GUI        | Windows API        | Windows API        | Cocoa                            | GTK                           |
+|            | Windows            | Windows            | Windows       | MacOS                            | Linux                         |
+| ---------- | ------------------ | ------------------ | ------------- | -------------------------------- | ----------------------------- |
+| Version    | Windows 10, v1809+ | Windows 7, 8.1, 10 | Windows       | Tested on MacOS Mojave, Catalina | Tested on Ubuntu 18.04.02 LTS |
+| Web Engine | EdgeHTML           | Chromium           | MSHTML (IE)   | Webkit                           | WebKit                        |
+| GUI        | Windows API        | Windows API        | Windows API   | Cocoa                            | GTK                           |
 
 ## Documentation
 

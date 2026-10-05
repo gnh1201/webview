@@ -2,11 +2,11 @@
 #define WEBVIEW_H
 
 #if !defined(WEBVIEW_WIN) && !defined(WEBVIEW_EDGE) && \
-    !defined(WEBVIEW_MAC) && !defined(WEBVIEW_GTK)
-#error "Define one of WEBVIEW_WIN, WEBVIEW_EDGE, WEBVIEW_MAC, or WEBVIEW_GTK"
+    !defined(WEBVIEW_MSHTML) && !defined(WEBVIEW_MAC) && !defined(WEBVIEW_GTK)
+#error "Define one of WEBVIEW_WIN, WEBVIEW_EDGE, WEBVIEW_MSHTML, WEBVIEW_MAC, or WEBVIEW_GTK"
 #endif
 
-#if defined(WEBVIEW_WIN) || defined(WEBVIEW_EDGE)
+#if defined(WEBVIEW_WIN) || defined(WEBVIEW_EDGE) || defined(WEBVIEW_MSHTML)
 #define WEBVIEW_IS_WIN
 #endif
 
@@ -26,6 +26,16 @@
 // Headers
 #include <functional>
 #include <string>
+
+#if defined(WEBVIEW_MSHTML)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <objbase.h>
+#include <exdisp.h>
+#include <mshtml.h>
+#include <atlbase.h>
+#include <atlhost.h>
+#endif
 
 #if defined(WEBVIEW_WIN)
 #define WIN32_LEAN_AND_MEAN
@@ -183,6 +193,12 @@ private:
     wil::com_ptr<ICoreWebView2Controller>
         webviewController;                      // Pointer to WebViewController
     wil::com_ptr<ICoreWebView2> webviewWindow;  // Pointer to WebView window
+#elif defined(WEBVIEW_MSHTML)
+    String inject = Str(
+        "if(!window.__webviewInjected){window.external={invoke:function(arg){document.title='__webview:'+encodeURIComponent(arg)}};window.__webviewInjected=true;}");
+    HWND mshtmlHost = nullptr;
+    CComPtr<IWebBrowser2> mshtmlBrowser;
+    String pendingEval;
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
     String inject =
         Str("window.external={invoke:arg=>window.webkit."
@@ -428,6 +444,59 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 w->resize();
             }
             return DefWindowProc(hwnd, msg, wparam, lparam);
+#if defined(WEBVIEW_MSHTML)
+        case WM_TIMER:
+            if (w != nullptr && w->init_done && w->mshtmlBrowser) {
+                CComPtr<IDispatch> disp;
+                CComPtr<IHTMLDocument2> doc;
+                if (SUCCEEDED(w->mshtmlBrowser->get_Document(&disp)) && disp &&
+                    SUCCEEDED(disp->QueryInterface(IID_PPV_ARGS(&doc))) && doc) {
+                    CComPtr<IHTMLWindow2> win;
+                    if (SUCCEEDED(doc->get_parentWindow(&win)) && win) {
+                        CComBSTR ready;
+                        doc->get_readyState(&ready);
+                        if (ready && wcscmp(ready, L"complete") == 0) {
+                            CComBSTR script(w->inject.c_str());
+                            CComBSTR language(L"javascript");
+                            win->execScript(script, language, nullptr);
+                            if (!w->pendingEval.empty()) {
+                                CComBSTR queued(w->pendingEval.c_str());
+                                win->execScript(queued, language, nullptr);
+                                w->pendingEval.clear();
+                            }
+                        }
+                    }
+                    CComBSTR title;
+                    if (SUCCEEDED(doc->get_title(&title)) && title &&
+                        wcsncmp(title, L"__webview:", 10) == 0) {
+                        std::wstring encoded(static_cast<BSTR>(title) + 10);
+                        std::string utf8;
+                        for (size_t i = 0; i < encoded.size();) {
+                            if (encoded[i] == L'%' && i + 2 < encoded.size()) {
+                                wchar_t hex[3] = {encoded[i + 1], encoded[i + 2], 0};
+                                utf8.push_back(static_cast<char>(
+                                    wcstol(hex, nullptr, 16)));
+                                i += 3;
+                            } else {
+                                utf8.push_back(static_cast<char>(encoded[i++]));
+                            }
+                        }
+                        int chars = MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
+                                                        static_cast<int>(utf8.size()),
+                                                        nullptr, 0);
+                        std::wstring message(chars > 0 ? chars : 0, L'\0');
+                        if (chars > 0) {
+                            MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
+                                                static_cast<int>(utf8.size()),
+                                                message.data(), chars);
+                        }
+                        if (w->js_callback) w->js_callback(*w, message);
+                        doc->put_title(CComBSTR(L""));
+                    }
+                }
+            }
+            return 0;
+#endif
         case WM_DPICHANGED:
             if (w != nullptr) {
                 // Resize on DPI change
@@ -765,6 +834,71 @@ void WebView::resize() {
     GetClientRect(hwnd, &rc);
     webviewController->put_Bounds(rc);
 }
+#elif defined(WEBVIEW_MSHTML)
+int WebView::init() {
+    if (WinInit() != 0 || FAILED(OleInitialize(nullptr)) || !AtlAxWinInit()) {
+        return -1;
+    }
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    mshtmlHost = CreateWindowEx(0, L"AtlAxWin", L"Shell.Explorer.2",
+                                WS_CHILD | WS_VISIBLE, 0, 0, rc.right, rc.bottom,
+                                hwnd, nullptr, GetModuleHandle(nullptr), nullptr);
+    if (!mshtmlHost || FAILED(AtlAxGetControl(mshtmlHost, &mshtmlBrowser)))
+        return -1;
+    mshtmlBrowser->put_Silent(debug ? VARIANT_FALSE : VARIANT_TRUE);
+    init_done = true;
+    SetTimer(hwnd, 1, 100, nullptr);
+    setTitle(title);
+    if (fullscreen) setFullscreen(true);
+    setBgColor(bgR, bgG, bgB, bgA);
+    navigate(url);
+    return 0;
+}
+
+void WebView::setFullscreenFromJS(bool allow) { fullscreenFromJS = allow; }
+
+void WebView::setBgColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (!init_done) {
+        bgR = r;
+        bgG = g;
+        bgB = b;
+        bgA = a;
+    }
+}
+
+void WebView::navigate(std::wstring u) {
+    if (!init_done) {
+        url = u;
+        return;
+    }
+    CComVariant address(u.c_str()), empty;
+    mshtmlBrowser->Navigate2(&address, &empty, &empty, &empty, &empty);
+}
+
+void WebView::eval(const std::wstring& js) {
+    if (!init_done) { pendingEval += js + L"\n"; return; }
+    CComPtr<IDispatch> disp;
+    CComPtr<IHTMLDocument2> doc;
+    CComPtr<IHTMLWindow2> win;
+    if (SUCCEEDED(mshtmlBrowser->get_Document(&disp)) && disp &&
+        SUCCEEDED(disp->QueryInterface(IID_PPV_ARGS(&doc))) && doc &&
+        SUCCEEDED(doc->get_parentWindow(&win)) && win) {
+        CComBSTR script(js.c_str()), language(L"javascript");
+        win->execScript(script, language, nullptr);
+    } else {
+        pendingEval += js + L"\n";
+    }
+}
+
+void WebView::exit() { KillTimer(hwnd, 1); PostQuitMessage(WM_QUIT); }
+
+void WebView::resize() {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    if (mshtmlHost) MoveWindow(mshtmlHost, 0, 0, rc.right, rc.bottom, TRUE);
+}
+
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
 int WebView::init() {
     // Initialize autorelease pool
