@@ -10,13 +10,13 @@ This repository is [forked from MichaelKim/webview](https://github.com/MichaelKi
 | --- | --- | --- | --- |
 | Windows | WebView2 (`WEBVIEW_EDGE`) | Microsoft Edge (Chromium) | Recommended; requires the WebView2 Runtime. |
 | Windows | EdgeHTML (`WEBVIEW_WIN`) | Microsoft Edge Legacy | Requires Windows 10 version 1809 or later; deprecated. |
-| Windows | MSHTML (`WEBVIEW_MSHTML`) | Trident | Legacy compatibility only; requires ATL. |
+| Windows | MSHTML (`WEBVIEW_MSHTML`) | Trident | Industrial and legacy application compatibility; requires ATL. |
 
 The macOS WebKit backend was last listed as tested on macOS Mojave and Catalina. The Linux WebKitGTK backend was last listed as tested on Ubuntu 18.04.02 LTS. Neither has been tested against newer releases as part of recent Windows-focused work.
 
 ## WelsonJS and MSHTML
 
-MSHTML support was added for [WelsonJS](https://github.com/gnh1201/welsonjs), a lightweight Windows JavaScript framework used to build applications and automate industrial systems. Its applications combine JavaScript (including transpiled languages) with HTML and CSS, and may need to run in legacy or resource-constrained Windows environments. The MSHTML backend allows those interfaces to use the Trident engine provided by the Windows system when a newer browser runtime is unavailable or unsuitable. Because MSHTML is deprecated, use it only when that compatibility is required.
+MSHTML support was added to help [WelsonJS](https://github.com/gnh1201/welsonjs), a lightweight Windows JavaScript framework for application development and industrial-system automation, maintain compatibility with existing industrial systems and their web-based interfaces. WelsonJS applications combine JavaScript (including transpiled languages) with HTML and CSS. The MSHTML backend provides access to the system's Trident engine for environments where compatibility with existing applications and workflows is important.
 
 The MSHTML implementation includes balanced COM/OLE initialization and cleanup, navigation and new-window event handling, defensive initialization and teardown, and JavaScript/native callback support. In local-file-only mode, external document and frame navigation is blocked and displays a built-in Forbidden page; subresource loads such as scripts and stylesheets are not filtered.
 
