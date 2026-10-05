@@ -2,11 +2,11 @@
 #define WEBVIEW_H
 
 #if !defined(WEBVIEW_WIN) && !defined(WEBVIEW_EDGE) && \
-    !defined(WEBVIEW_MAC) && !defined(WEBVIEW_GTK)
-#error "Define one of WEBVIEW_WIN, WEBVIEW_EDGE, WEBVIEW_MAC, or WEBVIEW_GTK"
+    !defined(WEBVIEW_MSHTML) && !defined(WEBVIEW_MAC) && !defined(WEBVIEW_GTK)
+#error "Define one of WEBVIEW_WIN, WEBVIEW_EDGE, WEBVIEW_MSHTML, WEBVIEW_MAC, or WEBVIEW_GTK"
 #endif
 
-#if defined(WEBVIEW_WIN) || defined(WEBVIEW_EDGE)
+#if defined(WEBVIEW_WIN) || defined(WEBVIEW_EDGE) || defined(WEBVIEW_MSHTML)
 #define WEBVIEW_IS_WIN
 #endif
 
@@ -25,14 +25,135 @@
 
 // Headers
 #include <functional>
+#include <cwchar>
+#include <filesystem>
+#include <iterator>
 #include <string>
+
+#if defined(WEBVIEW_MSHTML)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <objbase.h>
+#include <exdisp.h>
+#include <exdispid.h>
+#include <mshtml.h>
+#include <shellscalingapi.h>
+#include <atlbase.h>
+#include <atlcom.h>
+#include <atlhost.h>
+#include <shlwapi.h>
+#pragma comment(lib, "Shlwapi.lib")
+namespace wv::detail {
+class AtlHostingModule final : public ATL::CAtlModule {
+public:
+    HRESULT AddCommonRGSReplacements(IRegistrarBase*) throw() override {
+        return E_NOTIMPL;
+    }
+};
+
+inline void ensureAtlHostingModule() {
+    if (ATL::_pAtlModule == nullptr) {
+        static AtlHostingModule module;
+        (void)module;
+    }
+}
+}  // namespace wv::detail
+#pragma warning(push)
+#pragma warning(disable : 4265)
+class MshtmlNavigationSink
+    : public CComObjectRootEx<CComSingleThreadModel>, public IDispatch {
+public:
+    std::function<void(BSTR, VARIANT_BOOL*)> beforeNavigate;
+    std::function<void(BSTR, VARIANT_BOOL*)> newWindowRequested;
+    std::function<void(BSTR, LONG)> navigateError;
+
+    BEGIN_COM_MAP(MshtmlNavigationSink)
+    COM_INTERFACE_ENTRY(IDispatch)
+    END_COM_MAP()
+
+    STDMETHOD(GetTypeInfoCount)(UINT* count) override {
+        if (!count) return E_POINTER;
+        *count = 0;
+        return S_OK;
+    }
+    STDMETHOD(GetTypeInfo)(UINT, LCID, ITypeInfo**) override {
+        return E_NOTIMPL;
+    }
+    STDMETHOD(GetIDsOfNames)(REFIID, LPOLESTR*, UINT, LCID, DISPID*) override {
+        return E_NOTIMPL;
+    }
+    STDMETHOD(Invoke)(DISPID id, REFIID, LCID, WORD, DISPPARAMS* params,
+                      VARIANT*, EXCEPINFO*, UINT*) override {
+        constexpr DISPID beforeNavigate2 = 250;
+        constexpr DISPID newWindow2 = 251;
+        constexpr DISPID navigateErrorEvent = 271;
+        constexpr DISPID newWindow3 = 273;
+        if (!params) return S_OK;
+        if (id == navigateErrorEvent && params->cArgs >= 4) {
+            VARIANT* urlArg = &params->rgvarg[3];
+            VARIANT* statusArg = &params->rgvarg[1];
+            const VARIANT* value = urlArg;
+            while (value && value->vt == (VT_VARIANT | VT_BYREF))
+                value = value->pvarVal;
+            BSTR target = nullptr;
+            if (value && value->vt == VT_BSTR)
+                target = value->bstrVal;
+            else if (value && value->vt == (VT_BSTR | VT_BYREF) &&
+                     value->pbstrVal)
+                target = *value->pbstrVal;
+            LONG status = 0;
+            if (statusArg->vt == VT_I4)
+                status = statusArg->lVal;
+            else if (statusArg->vt == (VT_I4 | VT_BYREF) &&
+                     statusArg->plVal)
+                status = *statusArg->plVal;
+            if (navigateError) navigateError(target, status);
+            return S_OK;
+        }
+        VARIANT* url = nullptr;
+        VARIANT* cancelArg = nullptr;
+        bool isNewWindow = false;
+        if (id == beforeNavigate2 && params->cArgs >= 7) {
+            url = &params->rgvarg[5];
+            cancelArg = &params->rgvarg[0];
+        } else if (id == newWindow3 && params->cArgs >= 5) {
+            url = &params->rgvarg[0];
+            cancelArg = &params->rgvarg[3];
+            isNewWindow = true;
+        } else if (id == newWindow2 && params->cArgs >= 2) {
+            cancelArg = &params->rgvarg[0];
+            isNewWindow = true;
+        } else {
+            return S_OK;
+        }
+        VARIANT_BOOL* cancel =
+            cancelArg->vt == (VT_BOOL | VT_BYREF) ? cancelArg->pboolVal : nullptr;
+        const VARIANT* value = url;
+        while (value && value->vt == (VT_VARIANT | VT_BYREF))
+            value = value->pvarVal;
+        BSTR target = nullptr;
+        if (value && value->vt == VT_BSTR)
+            target = value->bstrVal;
+        else if (value && value->vt == (VT_BSTR | VT_BYREF) && value->pbstrVal)
+            target = *value->pbstrVal;
+        if (isNewWindow && newWindowRequested)
+            newWindowRequested(target, cancel);
+        else if (beforeNavigate)
+            beforeNavigate(target, cancel);
+        return S_OK;
+    }
+};
+#pragma warning(pop)
+#endif
 
 #if defined(WEBVIEW_WIN)
 #define WIN32_LEAN_AND_MEAN
 #pragma comment(lib, "windowsapp")
+#pragma comment(lib, "Shlwapi.lib")
 
 #include <objbase.h>
 #include <shellscalingapi.h>
+#include <shlwapi.h>
 #include <windows.h>
 #include <winrt/Windows.Web.UI.Interop.h>
 
@@ -59,6 +180,10 @@
 #include <wrl.h>
 
 #include <cstdlib>
+#include <atomic>
+#include <cwchar>
+#include <memory>
+#include <type_traits>
 #include <utility>
 #elif defined(WEBVIEW_MAC)  // WEBVIEW_EDGE
 #import <Cocoa/Cocoa.h>
@@ -111,6 +236,48 @@ using namespace winrt::Windows::Web::UI::Interop;
 using namespace Microsoft::WRL;
 #endif
 
+#if defined(WEBVIEW_IS_WIN)
+inline constexpr wchar_t FORBIDDEN_PAGE_URI[] =
+    L"data:text/html,%3Ctitle%3EForbidden%3C/title%3E%3Ch1%3EForbidden%3C/h1%3E";
+inline bool isLocalFileUri(const wchar_t* uri) {
+    if (!uri) return false;
+    size_t drive = 0;
+    if (_wcsnicmp(uri, L"file:///", 8) == 0) {
+        drive = 8;
+    } else if (_wcsnicmp(uri, L"file://localhost/", 17) == 0) {
+        drive = 17;
+    } else {
+        return false;
+    }
+    const auto length = wcslen(uri);
+    return length >= drive + 3 &&
+           ((uri[drive] >= L'A' && uri[drive] <= L'Z') ||
+            (uri[drive] >= L'a' && uri[drive] <= L'z')) &&
+           uri[drive + 1] == L':' && uri[drive + 2] == L'/';
+}
+inline bool isLocalFilePath(const wchar_t* path) {
+    return path &&
+           ((path[0] >= L'A' && path[0] <= L'Z') ||
+            (path[0] >= L'a' && path[0] <= L'z')) &&
+           path[1] == L':' && (path[2] == L'\\' || path[2] == L'/');
+}
+#endif
+inline bool isLocalFileUri(const std::string& uri) {
+    const auto startsWith = [&uri](const char* prefix) {
+        for (size_t i = 0; prefix[i] != '\0'; ++i) {
+            char ch = uri.size() > i ? uri[i] : '\0';
+            if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+            if (ch != prefix[i]) return false;
+        }
+        return true;
+    };
+    if (startsWith("file:///"))
+        return uri.size() > 8 && uri[8] != '/' && uri[8] != '\\';
+    if (startsWith("file://localhost/"))
+        return uri.size() > 17 && uri[17] != '/' && uri[17] != '\\';
+    return false;
+}
+
 class WebView {
     using jscb = std::function<void(WebView&, String&)>;
 
@@ -124,6 +291,41 @@ public:
           debug(debug_),
           title(title_),
           url(url_) {}
+    ~WebView() {
+        init_done = false;
+#if defined(WEBVIEW_EDGE)
+        webviewAlive->store(false);
+        if (webviewController) webviewController->Close();
+        webviewWindow.reset();
+        webviewController.reset();
+        if (webviewComInitialized) {
+            webviewComInitialized = false;
+            CoUninitialize();
+        }
+#elif defined(WEBVIEW_WIN)
+        webview = nullptr;
+        if (webviewApartmentInitialized) {
+            webviewApartmentInitialized = false;
+            winrt::uninit_apartment();
+        }
+#endif
+#if defined(WEBVIEW_MSHTML)
+        if (hwnd && IsWindow(hwnd)) KillTimer(hwnd, 1);
+        if (mshtmlConnectionPoint && mshtmlEventCookie)
+            mshtmlConnectionPoint->Unadvise(mshtmlEventCookie);
+        mshtmlConnectionPoint.Release();
+        mshtmlEventSink.Release();
+        mshtmlBrowser.Release();
+        if (mshtmlHost && IsWindow(mshtmlHost)) DestroyWindow(mshtmlHost);
+        if (mshtmlOleInitialized) {
+            mshtmlOleInitialized = false;
+            OleUninitialize();
+        }
+#endif
+#if defined(WEBVIEW_IS_WIN)
+        if (hwnd && IsWindow(hwnd)) DestroyWindow(hwnd);
+#endif
+    }
     int init();                            // Initialize webview
     void setCallback(jscb callback);       // JS callback
     void setTitle(String t);               // Set title of window
@@ -131,6 +333,7 @@ public:
     void setFullscreenFromJS(bool allow);  // Allow setting fullscreen from JS
     void setBgColor(uint8_t r, uint8_t g, uint8_t b,
                     uint8_t a);      // Set background color
+    void setLocalFileOnly(bool enabled) { localFileOnly = enabled; }
     bool run();                      // Main loop
     void navigate(String u);         // Navigate to URL
     void preEval(const String& js);  // Eval JS before page loads
@@ -139,12 +342,16 @@ public:
     void exit();                     // Stop loop
 
 private:
+    void showForbiddenPage();
+
     // Properties for init
     int width;
     int height;
     bool resizable;
     bool fullscreen = false;
     bool fullscreenFromJS = false;
+    bool localFileOnly = false;
+    bool localNotFoundPage = false;
     bool debug;
     String title;
     String url;
@@ -167,6 +374,76 @@ private:
     } savedWindowInfo{};
 
     int WinInit();
+#endif
+    void prepareLocalStartPage() {
+        if (!localFileOnly) return;
+#if defined(WEBVIEW_IS_WIN)
+        if (isLocalFileUri(url.c_str())) return;
+#else
+        if (isLocalFileUri(url)) return;
+#endif
+        std::error_code ec;
+        const std::filesystem::path page =
+            std::filesystem::current_path(ec) / "index.html";
+        if (ec) {
+            localNotFoundPage = true;
+            url = Str("data:text/html,%3Ctitle%3ENot%20Found%3C/title%3E%3Ch1%3ENot%20Found%3C/h1%3E");
+            return;
+        }
+        if (std::filesystem::is_regular_file(page, ec) && !ec) {
+#if defined(WEBVIEW_IS_WIN)
+            std::wstring uri(32768, L'\0');
+            DWORD length = static_cast<DWORD>(uri.size());
+            if (SUCCEEDED(UrlCreateFromPathW(page.c_str(), uri.data(), &length, 0))) {
+                uri.resize(wcslen(uri.c_str()));
+                url = std::move(uri);
+                return;
+            }
+#else
+            const auto path = std::filesystem::absolute(page, ec).generic_string();
+            if (!ec) {
+                static constexpr char hex[] = "0123456789ABCDEF";
+                std::string uri = "file://";
+                for (unsigned char ch : path) {
+                    if ((ch >= 'a' && ch <= 'z') ||
+                        (ch >= 'A' && ch <= 'Z') ||
+                        (ch >= '0' && ch <= '9') || ch == '/' || ch == ':' ||
+                        ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+                        uri += static_cast<char>(ch);
+                    } else {
+                        uri += '%';
+                        uri += hex[ch >> 4];
+                        uri += hex[ch & 15];
+                    }
+                }
+                url = uri;
+                return;
+            }
+#endif
+        }
+        localNotFoundPage = true;
+        url = Str("data:text/html,%3Ctitle%3ENot%20Found%3C/title%3E%3Ch1%3ENot%20Found%3C/h1%3E");
+    }
+#if defined(WEBVIEW_IS_WIN)
+    bool isAllowedLocalDocument(const wchar_t* uri) const {
+        return isLocalFileUri(uri) || isLocalFilePath(uri) ||
+               (uri && _wcsicmp(uri, FORBIDDEN_PAGE_URI) == 0) ||
+               (uri && _wcsicmp(uri, L"about:blank") == 0) ||
+               (uri && _wcsicmp(uri, L"about:srcdoc") == 0) ||
+               (localNotFoundPage && uri &&
+                _wcsicmp(uri, L"data:text/html,%3Ctitle%3ENot%20Found%3C/title%3E%3Ch1%3ENot%20Found%3C/h1%3E") == 0);
+    }
+#else
+    bool isAllowedLocalDocument(const std::string& uri) const {
+        return isLocalFileUri(uri) ||
+               uri == "about:blank" ||
+               uri == "about:srcdoc" ||
+               uri == "data:text/html,%3Ctitle%3EForbidden%3C/title%3E%3Ch1%3EForbidden%3C/h1%3E" ||
+               (localNotFoundPage &&
+                uri == "data:text/html,%3Ctitle%3ENot%20Found%3C/title%3E%3Ch1%3ENot%20Found%3C/h1%3E");
+    }
+#endif
+#if defined(WEBVIEW_IS_WIN)
     void onDPIChange(const UINT dpi, const RECT& rect);
     void resize();
     static LRESULT CALLBACK WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
@@ -177,12 +454,32 @@ private:
     String inject =
         Str("window.external.invoke=arg=>window.external.notify(arg);");
     WebViewControl webview{nullptr};
+    bool webviewApartmentInitialized = false;
+    bool initializeScriptRegistered = false;
 #elif defined(WEBVIEW_EDGE)  // WEBVIEW_WIN
     String inject = Str(
         "window.external.invoke=arg=>window.chrome.webview.postMessage(arg);");
     wil::com_ptr<ICoreWebView2Controller>
         webviewController;                      // Pointer to WebViewController
     wil::com_ptr<ICoreWebView2> webviewWindow;  // Pointer to WebView window
+    bool webviewComInitialized = false;
+    bool firstNavigationCompleted = false;
+    std::shared_ptr<std::atomic_bool> webviewAlive =
+        std::make_shared<std::atomic_bool>(true);
+    std::wstring pendingEval;
+#elif defined(WEBVIEW_MSHTML)
+    String inject = Str(
+        "if(!window.__webviewInjected){window.external={invoke:function(arg){document.title='__webview:'+encodeURIComponent(arg)}};window.__webviewInjected=true;}");
+    HWND mshtmlHost = nullptr;
+    CComPtr<IWebBrowser2> mshtmlBrowser;
+    CComPtr<IConnectionPoint> mshtmlConnectionPoint;
+    CComPtr<IDispatch> mshtmlEventSink;
+    DWORD mshtmlEventCookie = 0;
+    bool mshtmlOleInitialized = false;
+    bool mshtmlInitialNavigationPending = false;
+    std::wstring mshtmlPendingNewWindowUrl;
+    std::wstring mshtmlNavigationError;
+    String pendingEval;
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
     String inject =
         Str("window.external={invoke:arg=>window.webkit."
@@ -306,10 +603,19 @@ int WebView::WinInit() {
     wc.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
 
     if (!RegisterClassEx(&wc)) {
-        MessageBox(nullptr, L"Call to RegisterClassEx failed!", L"Error!",
-                   NULL);
-
-        return -1;
+        if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+            MessageBox(nullptr, L"Call to RegisterClassEx failed!", L"Error!",
+                       MB_OK | MB_ICONERROR);
+            return -1;
+        }
+        WNDCLASSEX existing{};
+        existing.cbSize = sizeof(existing);
+        if (!GetClassInfoEx(hInt, wc.lpszClassName, &existing) ||
+            existing.lpfnWndProc != WndProcedure) {
+            MessageBox(nullptr, L"The WebView window class is already in use.",
+                       L"Error", MB_OK | MB_ICONERROR);
+            return -1;
+        }
     }
 
     // Set default DPI awareness
@@ -428,6 +734,97 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 w->resize();
             }
             return DefWindowProc(hwnd, msg, wparam, lparam);
+#if defined(WEBVIEW_WIN) || defined(WEBVIEW_EDGE) || \
+    defined(WEBVIEW_MSHTML)
+        case WM_APP + 42:
+            if (w != nullptr) w->showForbiddenPage();
+            return 0;
+#endif
+#if defined(WEBVIEW_MSHTML)
+        case WM_APP + 43:
+            if (w != nullptr && !w->mshtmlNavigationError.empty())
+                MessageBox(hwnd, w->mshtmlNavigationError.c_str(),
+                           L"MSHTML navigation error",
+                           MB_OK | MB_ICONERROR);
+            return 0;
+        case WM_APP + 45:
+            if (w != nullptr && !w->mshtmlPendingNewWindowUrl.empty()) {
+                auto target = std::move(w->mshtmlPendingNewWindowUrl);
+                w->mshtmlPendingNewWindowUrl.clear();
+                w->navigate(std::move(target));
+            }
+            return 0;
+#endif
+#if defined(WEBVIEW_EDGE)
+        case WM_MOVE:
+        case WM_MOVING:
+            if (w != nullptr && w->webviewController) {
+                w->webviewController->NotifyParentWindowPositionChanged();
+            }
+            return DefWindowProc(hwnd, msg, wparam, lparam);
+#endif
+#if defined(WEBVIEW_MSHTML)
+        case WM_TIMER:
+            if (w != nullptr && w->init_done && w->mshtmlBrowser) {
+                if (w->mshtmlInitialNavigationPending) {
+                    READYSTATE state = READYSTATE_UNINITIALIZED;
+                    if (SUCCEEDED(w->mshtmlBrowser->get_ReadyState(&state)) &&
+                        state == READYSTATE_COMPLETE) {
+                        w->mshtmlInitialNavigationPending = false;
+                        w->navigate(w->url);
+                    }
+                    return 0;
+                }
+                CComPtr<IDispatch> disp;
+                CComPtr<IHTMLDocument2> doc;
+                if (SUCCEEDED(w->mshtmlBrowser->get_Document(&disp)) && disp &&
+                    SUCCEEDED(disp->QueryInterface(IID_PPV_ARGS(&doc))) && doc) {
+                    CComPtr<IHTMLWindow2> win;
+                    if (SUCCEEDED(doc->get_parentWindow(&win)) && win) {
+                        CComBSTR ready;
+                        doc->get_readyState(&ready);
+                        if (ready && wcscmp(ready, L"complete") == 0) {
+                            CComBSTR script(w->inject.c_str());
+                            CComBSTR language(L"javascript");
+                            win->execScript(script, language, nullptr);
+                            if (!w->pendingEval.empty()) {
+                                CComBSTR queued(w->pendingEval.c_str());
+                                win->execScript(queued, language, nullptr);
+                                w->pendingEval.clear();
+                            }
+                        }
+                    }
+                    CComBSTR title;
+                    if (SUCCEEDED(doc->get_title(&title)) && title &&
+                        wcsncmp(title, L"__webview:", 10) == 0) {
+                        std::wstring encoded(static_cast<BSTR>(title) + 10);
+                        std::string utf8;
+                        for (size_t i = 0; i < encoded.size();) {
+                            if (encoded[i] == L'%' && i + 2 < encoded.size()) {
+                                wchar_t hex[3] = {encoded[i + 1], encoded[i + 2], 0};
+                                utf8.push_back(static_cast<char>(
+                                    wcstol(hex, nullptr, 16)));
+                                i += 3;
+                            } else {
+                                utf8.push_back(static_cast<char>(encoded[i++]));
+                            }
+                        }
+                        int chars = MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
+                                                        static_cast<int>(utf8.size()),
+                                                        nullptr, 0);
+                        std::wstring message(chars > 0 ? chars : 0, L'\0');
+                        if (chars > 0) {
+                            MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
+                                                static_cast<int>(utf8.size()),
+                                                message.data(), chars);
+                        }
+                        if (w->js_callback) w->js_callback(*w, message);
+                        doc->put_title(CComBSTR(L""));
+                    }
+                }
+            }
+            return 0;
+#endif
         case WM_DPICHANGED:
             if (w != nullptr) {
                 // Resize on DPI change
@@ -464,6 +861,35 @@ void WebView::onDPIChange(const UINT newDpi, const RECT& rect) {
 }
 #endif
 
+void WebView::showForbiddenPage() {
+#if defined(WEBVIEW_WIN)
+    webview.NavigateToString(L"<title>Forbidden</title><h1>Forbidden</h1>");
+#elif defined(WEBVIEW_EDGE)
+    if (webviewWindow) webviewWindow->Navigate(FORBIDDEN_PAGE_URI);
+#elif defined(WEBVIEW_MSHTML)
+    CComPtr<IDispatch> dispatch;
+    CComPtr<IHTMLDocument2> document;
+    if (SUCCEEDED(mshtmlBrowser->get_Document(&dispatch)) && dispatch &&
+        SUCCEEDED(dispatch->QueryInterface(IID_PPV_ARGS(&document))) && document) {
+        SAFEARRAY* html = SafeArrayCreateVector(VT_VARIANT, 0, 1);
+        if (!html) return;
+        LONG index = 0;
+        CComVariant markup(L"<title>Forbidden</title><h1>Forbidden</h1>");
+        if (SUCCEEDED(SafeArrayPutElement(html, &index, &markup)))
+            document->write(html);
+        SafeArrayDestroy(html);
+        document->close();
+    }
+#elif defined(WEBVIEW_MAC)
+    [webview loadHTMLString:@"<title>Forbidden</title><h1>Forbidden</h1>"
+                    baseURL:nil];
+#elif defined(WEBVIEW_GTK)
+    webkit_web_view_load_html(WEBKIT_WEB_VIEW(webview),
+                              "<title>Forbidden</title><h1>Forbidden</h1>",
+                              nullptr);
+#endif
+}
+
 #if defined(WEBVIEW_WIN)
 // Await helper
 template <typename T>
@@ -486,8 +912,10 @@ int WebView::init() {
         return res;
     }
 
+    try {
     // Set to single-thread
     init_apartment(winrt::apartment_type::single_threaded);
+    webviewApartmentInitialized = true;
 
     // Allow intranet access (and localhost)
     WebViewControlProcessOptions options;
@@ -504,8 +932,34 @@ int WebView::init() {
             js_callback(*this, ws);
         }
     });
-    webview.NavigationStarting([this](const auto&, const auto&) {
-        webview.AddInitializeScript(inject);
+    webview.NavigationStarting([this](const auto&, const auto& args) {
+        if (localFileOnly &&
+            !isAllowedLocalDocument(args.Uri().AbsoluteUri().c_str())) {
+            args.Cancel(true);
+            PostMessage(hwnd, WM_APP + 42, 0, 0);
+            return;
+        }
+        if (!initializeScriptRegistered) {
+            webview.AddInitializeScript(inject);
+            initializeScriptRegistered = true;
+        }
+    });
+    webview.FrameNavigationStarting([this](const auto&, const auto& args) {
+        if (localFileOnly &&
+            !isAllowedLocalDocument(args.Uri().AbsoluteUri().c_str())) {
+            args.Cancel(true);
+            PostMessage(hwnd, WM_APP + 42, 0, 0);
+        }
+    });
+    webview.NewWindowRequested([this](const auto&, const auto& args) {
+        if (!localFileOnly) return;
+        args.Handled(true);
+        const auto targetUri = args.Uri().AbsoluteUri();
+        const std::wstring target(targetUri.c_str());
+        if (isAllowedLocalDocument(target.c_str()))
+            navigate(target);
+        else
+            PostMessage(hwnd, WM_APP + 42, 0, 0);
     });
 
     // Detect fullscreen request from JS
@@ -528,9 +982,15 @@ int WebView::init() {
         setFullscreen(true);
     }
     setBgColor(bgR, bgG, bgB, bgA);
+    prepareLocalStartPage();
     navigate(url);
 
     return 0;
+    } catch (const winrt::hresult_error&) {
+        MessageBox(hwnd, L"Could not initialize the EdgeHTML WebView.",
+                   L"WebView error", MB_ICONERROR | MB_OK);
+        return -1;
+    }
 }
 
 void WebView::setFullscreenFromJS(bool allow) { fullscreenFromJS = allow; }
@@ -549,6 +1009,11 @@ void WebView::setBgColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
 void WebView::navigate(std::wstring u) {
     if (!init_done) {
         url = u;
+    } else if (localFileOnly && !isAllowedLocalDocument(u.c_str())) {
+        showForbiddenPage();
+        return;
+    } else if (localNotFoundPage && u == url) {
+        webview.NavigateToString(L"<title>Not Found</title><h1>Not Found</h1>");
     } else if (constexpr auto prefix = L"data:text/html,";
                u.rfind(prefix, 0) == 0) {
         constexpr auto len = std::wstring_view(prefix).size();
@@ -589,9 +1054,13 @@ int WebView::init() {
     if (FAILED(inithr)) {
         return -1;
     }
+    webviewComInitialized = true;
 
+    const std::weak_ptr<std::atomic_bool> lifetime = webviewAlive;
     auto onWebMessageReceieved =
-        [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
+        [this, lifetime](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
+            const auto alive = lifetime.lock();
+            if (!alive || !alive->load()) return S_OK;
             if (js_callback) {
                 // Consider args->get_WebMessageAsJson?
                 LPWSTR messageRaw;
@@ -602,44 +1071,145 @@ int WebView::init() {
                 }
 
                 std::wstring message(messageRaw);
-                js_callback(*this, message);
                 CoTaskMemFree(messageRaw);
+                js_callback(*this, message);
             }
             return S_OK;
         };
 
     auto onWebViewControllerCreate =
-        [this, onWebMessageReceieved](
+        [this, onWebMessageReceieved, lifetime](
             HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
-        if (FAILED(result)) {
-            return result;
+        const auto alive = lifetime.lock();
+        if (!alive || !alive->load()) {
+            if (controller) controller->Close();
+            return S_OK;
+        }
+        if (FAILED(result) || controller == nullptr) {
+            MessageBox(hwnd, L"Could not create the WebView2 controller.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return FAILED(result) ? result : E_FAIL;
         }
 
-        if (controller != nullptr) {
-            webviewController = controller;
-            webviewController->get_CoreWebView2(&webviewWindow);
+        webviewController = controller;
+        HRESULT hr = webviewController->get_CoreWebView2(&webviewWindow);
+        if (FAILED(hr) || !webviewWindow) {
+            MessageBox(hwnd, L"Could not initialize the WebView2 control.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return FAILED(hr) ? hr : E_FAIL;
         }
 
         wil::com_ptr<ICoreWebView2Settings> settings;
-        webviewWindow->get_Settings(&settings);
-        if (!debug) {
-            settings->put_AreDevToolsEnabled(FALSE);
+        hr = webviewWindow->get_Settings(&settings);
+        if (FAILED(hr) || !settings) {
+            MessageBox(hwnd, L"Could not read WebView2 settings.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+        if (!debug && FAILED(settings->put_AreDevToolsEnabled(FALSE))) {
+            MessageBox(hwnd, L"Could not configure WebView2 settings.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return E_FAIL;
         }
 
         // Resize WebView
         resize();
 
-        webviewWindow->AddScriptToExecuteOnDocumentCreated(inject.c_str(),
-                                                           nullptr);
-
-        webviewWindow->add_WebMessageReceived(
+        hr = webviewWindow->add_WebMessageReceived(
             Callback<ICoreWebView2WebMessageReceivedEventHandler>(
                 onWebMessageReceieved)
                 .Get(),
             nullptr);
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not connect WebView2 messages.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
+
+        hr = webviewWindow->add_NavigationStarting(
+            Callback<ICoreWebView2NavigationStartingEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2NavigationStartingEventArgs* args) {
+                    if (!localFileOnly || !args) return S_OK;
+                    LPWSTR uri = nullptr;
+                    const HRESULT uriResult = args->get_Uri(&uri);
+                    const bool allowed = SUCCEEDED(uriResult) &&
+                                         isAllowedLocalDocument(uri);
+                    CoTaskMemFree(uri);
+                    if (allowed) return S_OK;
+                    const HRESULT cancelResult = args->put_Cancel(TRUE);
+                    PostMessage(hwnd, WM_APP + 42, 0, 0);
+                    return cancelResult;
+                })
+                .Get(),
+            nullptr);
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not connect WebView2 navigation events.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
+
+        hr = webviewWindow->add_FrameNavigationStarting(
+            Callback<ICoreWebView2NavigationStartingEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                    if (!localFileOnly || !args) return S_OK;
+                    LPWSTR uri = nullptr;
+                    const HRESULT uriResult = args->get_Uri(&uri);
+                    const bool allowed = SUCCEEDED(uriResult) &&
+                                         isAllowedLocalDocument(uri);
+                    CoTaskMemFree(uri);
+                    if (allowed) return S_OK;
+                    const HRESULT cancelResult = args->put_Cancel(TRUE);
+                    PostMessage(hwnd, WM_APP + 42, 0, 0);
+                    return cancelResult;
+                })
+                .Get(),
+            nullptr);
+        if (FAILED(hr)) {
+            MessageBox(hwnd,
+                       L"Could not connect WebView2 frame navigation events.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
+
+        hr = webviewWindow->add_NewWindowRequested(
+            Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2NewWindowRequestedEventArgs* args) {
+                    if (!localFileOnly || !args) return S_OK;
+                    LPWSTR uri = nullptr;
+                    const HRESULT uriResult = args->get_Uri(&uri);
+                    HRESULT hr = args->put_Handled(TRUE);
+                    if (SUCCEEDED(hr)) {
+                        if (SUCCEEDED(uriResult) &&
+                            isAllowedLocalDocument(uri)) {
+                            hr = webviewWindow->Navigate(uri);
+                        } else {
+                            PostMessage(hwnd, WM_APP + 42, 0, 0);
+                        }
+                    }
+                    CoTaskMemFree(uri);
+                    return hr;
+                })
+                .Get(),
+            nullptr);
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not connect WebView2 window events.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
 
         // Detect fullscreen change from JS
-        webviewWindow->add_ContainsFullScreenElementChanged(
+        hr = webviewWindow->add_ContainsFullScreenElementChanged(
             Callback<ICoreWebView2ContainsFullScreenElementChangedEventHandler>(
                 [this](ICoreWebView2*, IUnknown*) {
                     if (fullscreenFromJS) {
@@ -653,64 +1223,142 @@ int WebView::init() {
                 })
                 .Get(),
             nullptr);
-
-        // Done initialization, set properties
-        init_done = true;
-
-        setTitle(title);
-        if (fullscreen) {
-            setFullscreen(true);
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not connect WebView2 events.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
         }
-        setBgColor(bgR, bgG, bgB, bgA);
-        navigate(url);
+
+        hr = webviewWindow->add_NavigationCompleted(
+            Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2NavigationCompletedEventArgs* args) {
+                    BOOL succeeded = FALSE;
+                    if (args && SUCCEEDED(args->get_IsSuccess(&succeeded)) &&
+                        succeeded) {
+                        firstNavigationCompleted = true;
+                        if (!pendingEval.empty()) {
+                            auto scripts = std::move(pendingEval);
+                            pendingEval.clear();
+                            eval(scripts);
+                        }
+                    }
+                    return S_OK;
+                })
+                .Get(),
+            nullptr);
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not connect WebView2 navigation events.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
+
+        // Document-start script registration is asynchronous. Navigate only
+        // after the completion callback confirms that it is ready.
+        hr = webviewWindow->AddScriptToExecuteOnDocumentCreated(
+            inject.c_str(),
+            Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+                [this, lifetime](HRESULT scriptResult, LPCWSTR) -> HRESULT {
+                    const auto alive = lifetime.lock();
+                    if (!alive || !alive->load()) return S_OK;
+                    if (FAILED(scriptResult)) {
+                        MessageBox(hwnd,
+                                   L"Could not register the WebView2 startup script.",
+                                   L"WebView2 error", MB_ICONERROR | MB_OK);
+                        PostMessage(hwnd, WM_CLOSE, 0, 0);
+                        return scriptResult;
+                    }
+
+                    init_done = true;
+                    setTitle(title);
+                    if (fullscreen) setFullscreen(true);
+                    setBgColor(bgR, bgG, bgB, bgA);
+                    prepareLocalStartPage();
+                    navigate(url);
+                    return S_OK;
+                })
+                .Get());
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not register the WebView2 startup script.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
 
         return S_OK;
     };
 
-    auto onCreateEnvironment = [this, onWebViewControllerCreate](
+    auto onCreateEnvironment = [this, onWebViewControllerCreate, lifetime](
                                    HRESULT result,
                                    ICoreWebView2Environment* env) -> HRESULT {
-        if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) {
-            MessageBox(nullptr, L"Could not find Edge installation.", L"Error!",
-                       NULL);
-            return result;
+        const auto alive = lifetime.lock();
+        if (!alive || !alive->load()) return S_OK;
+        if (FAILED(result) || env == nullptr) {
+            const wchar_t* message =
+                result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+                    ? L"Could not find the WebView2 Runtime."
+                    : L"Could not create the WebView2 environment.";
+            MessageBox(hwnd, message, L"WebView2 error",
+                       MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return FAILED(result) ? result : E_FAIL;
         }
 
-        // Create Webview2 controller
-        return env->CreateCoreWebView2Controller(
+        HRESULT hr = env->CreateCoreWebView2Controller(
             hwnd,
             Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                 onWebViewControllerCreate)
                 .Get());
+        if (FAILED(hr)) {
+            MessageBox(hwnd, L"Could not start WebView2 controller creation.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+        }
+        return hr;
     };
 
-    // Get APPDATA path
-    PCWSTR userDataFolderPtr = nullptr;
+    // Use a writable, machine-local profile directory. APPDATA can be
+    // redirected to a network or roaming profile.
     std::wstring userDataFolder;
-
-    DWORD bufferLength = 32767;
-    std::wstring appdataPath;
-    appdataPath.resize(bufferLength);
-    bufferLength = GetEnvironmentVariable(Str("APPDATA"), appdataPath.data(),
-                                          bufferLength);
-    if (bufferLength) {
-        appdataPath.resize(bufferLength);
-
-        // Get executable file name
-        wchar_t exePath[MAX_PATH];
-        GetModuleFileName(NULL, exePath, MAX_PATH);
-        userDataFolder = (appdataPath + Str("/") + PathFindFileName(exePath));
-        userDataFolderPtr = userDataFolder.c_str();
+    DWORD bufferLength = GetEnvironmentVariable(
+        Str("LOCALAPPDATA"), nullptr, 0);
+    if (bufferLength > 1) {
+        std::wstring localAppData(bufferLength, L'\0');
+        DWORD written = GetEnvironmentVariable(
+            Str("LOCALAPPDATA"), localAppData.data(), bufferLength);
+        if (written > 0 && written < bufferLength) {
+            localAppData.resize(written);
+            wchar_t exePath[32768]{};
+            DWORD exePathLength = GetModuleFileName(
+                nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+            if (exePathLength > 0 &&
+                exePathLength < static_cast<DWORD>(std::size(exePath))) {
+                userDataFolder = localAppData + Str("\\") +
+                                 PathFindFileName(exePath) +
+                                 Str(".WebView2");
+            }
+        }
     }
 
-    // Create WebView2 environment
+    if (userDataFolder.empty()) {
+        MessageBox(hwnd,
+                   L"Could not determine a writable WebView2 profile folder.",
+                   L"WebView2 error", MB_ICONERROR | MB_OK);
+        webviewComInitialized = false;
+        CoUninitialize();
+        return -1;
+    }
+
     auto hr = CreateCoreWebView2EnvironmentWithOptions(
-        nullptr, userDataFolderPtr, nullptr,
+        nullptr, userDataFolder.c_str(), nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             onCreateEnvironment)
             .Get());
 
     if (FAILED(hr)) {
+        webviewComInitialized = false;
         CoUninitialize();
         return -1;
     }
@@ -726,38 +1374,46 @@ void WebView::setBgColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
         bgG = g;
         bgB = b;
         bgA = a;
-    } else {
-        // TODO
+        return;
+    }
+
+    wil::com_ptr<ICoreWebView2Controller2> controller2;
+    if (SUCCEEDED(
+            webviewController->QueryInterface(IID_PPV_ARGS(&controller2))) &&
+        controller2) {
+        COREWEBVIEW2_COLOR color{static_cast<BYTE>(a == 0 ? 0 : 255), r, g, b};
+        controller2->put_DefaultBackgroundColor(color);
     }
 }
 
 void WebView::navigate(std::wstring u) {
     if (!init_done) {
         url = u;
+    } else if (localFileOnly && !isAllowedLocalDocument(u.c_str())) {
+        showForbiddenPage();
     } else {
-        webviewWindow->Navigate(u.c_str());
+        if (localNotFoundPage && u == url)
+            webviewWindow->NavigateToString(
+                L"<title>Not Found</title><h1>Not Found</h1>");
+        else
+            webviewWindow->Navigate(u.c_str());
     }
 }
 
 void WebView::eval(const std::wstring& js) {
-    // Schedule an async task to get the document URL
+    if (!firstNavigationCompleted || !webviewWindow) {
+        pendingEval += js;
+        pendingEval += L"\n";
+        return;
+    }
     webviewWindow->ExecuteScript(
         js.c_str(), Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-                        [](HRESULT, LPCWSTR) -> HRESULT {
-                            // LPCWSTR URL = resultObjectAsJson;
-                            // doSomethingWithURL(URL);
-                            return S_OK;
-                        })
+                        [](HRESULT, LPCWSTR) -> HRESULT { return S_OK; })
                         .Get());
-
-    // if (debug) {
-    // std::cout << winrt::to_string(result) << std::endl;
-    //}
 }
 
 void WebView::exit() {
     PostQuitMessage(WM_QUIT);
-    CoUninitialize();
 }
 
 void WebView::resize() {
@@ -765,6 +1421,198 @@ void WebView::resize() {
     GetClientRect(hwnd, &rc);
     webviewController->put_Bounds(rc);
 }
+#elif defined(WEBVIEW_MSHTML)
+int WebView::init() {
+    if (WinInit() != 0) return -1;
+    auto reportInitFailure = [](const wchar_t* stage, HRESULT hr) {
+        wchar_t message[256]{};
+        swprintf_s(message, L"MSHTML initialization failed at %s (HRESULT 0x%08lX).",
+                   stage, static_cast<unsigned long>(hr));
+        MessageBox(nullptr, message, L"MSHTML error", MB_OK | MB_ICONERROR);
+    };
+    const HRESULT oleResult = OleInitialize(nullptr);
+    if (FAILED(oleResult)) {
+        reportInitFailure(L"OleInitialize", oleResult);
+        return -1;
+    }
+    mshtmlOleInitialized = true;
+    wv::detail::ensureAtlHostingModule();
+    if (!AtlAxWinInit()) {
+        reportInitFailure(L"AtlAxWinInit", HRESULT_FROM_WIN32(GetLastError()));
+        return -1;
+    }
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    mshtmlHost = CreateWindowEx(0, _T(ATLAXWIN_CLASS), L"Shell.Explorer.2",
+                                WS_CHILD | WS_VISIBLE, 0, 0, rc.right, rc.bottom,
+                                hwnd, nullptr, GetModuleHandle(nullptr), nullptr);
+    CComPtr<IUnknown> control;
+    if (!mshtmlHost) {
+        reportInitFailure(L"CreateWindowEx(AtlAxWin)",
+                           HRESULT_FROM_WIN32(GetLastError()));
+        return -1;
+    }
+    HRESULT controlHr = AtlAxGetControl(mshtmlHost, &control);
+    if (FAILED(controlHr) || !control) {
+        reportInitFailure(L"AtlAxGetControl", FAILED(controlHr) ? controlHr
+                                                                : E_NOINTERFACE);
+        return -1;
+    }
+    controlHr = control->QueryInterface(IID_PPV_ARGS(&mshtmlBrowser));
+    if (FAILED(controlHr)) {
+        reportInitFailure(L"QueryInterface(IWebBrowser2)", controlHr);
+        return -1;
+    }
+    controlHr = mshtmlBrowser->put_Visible(VARIANT_TRUE);
+    if (FAILED(controlHr)) {
+        reportInitFailure(L"IWebBrowser2::put_Visible", controlHr);
+        return -1;
+    }
+    CComPtr<IConnectionPointContainer> connectionContainer;
+    CComObject<MshtmlNavigationSink>* sink = nullptr;
+    HRESULT eventHr = mshtmlBrowser->QueryInterface(
+        IID_PPV_ARGS(&connectionContainer));
+    if (SUCCEEDED(eventHr))
+        eventHr = connectionContainer->FindConnectionPoint(
+            DIID_DWebBrowserEvents2, &mshtmlConnectionPoint);
+    if (SUCCEEDED(eventHr))
+        eventHr = CComObject<MshtmlNavigationSink>::CreateInstance(&sink);
+    if (SUCCEEDED(eventHr) && sink) {
+        sink->AddRef();
+        sink->beforeNavigate = [this](BSTR target, VARIANT_BOOL* cancel) {
+            if (!localFileOnly || isAllowedLocalDocument(target)) return;
+            if (cancel) *cancel = VARIANT_TRUE;
+            PostMessage(hwnd, WM_APP + 42, 0, 0);
+        };
+        sink->newWindowRequested =
+            [this](BSTR target, VARIANT_BOOL* cancel) {
+                if (!localFileOnly) return;
+                if (cancel) *cancel = VARIANT_TRUE;
+                if (isAllowedLocalDocument(target)) {
+                    mshtmlPendingNewWindowUrl = target;
+                    PostMessage(hwnd, WM_APP + 45, 0, 0);
+                } else {
+                    PostMessage(hwnd, WM_APP + 42, 0, 0);
+                }
+            };
+        sink->navigateError = [this](BSTR target, LONG status) {
+            wchar_t statusText[16]{};
+            swprintf_s(statusText, L"%08lX",
+                       static_cast<unsigned long>(status));
+            mshtmlNavigationError = L"Failed to navigate to:\n";
+            mshtmlNavigationError += target ? target : L"(unknown URL)";
+            mshtmlNavigationError += L"\nStatus: 0x";
+            mshtmlNavigationError += statusText;
+            PostMessage(hwnd, WM_APP + 43, 0, 0);
+        };
+        CComPtr<IDispatch> eventSink;
+        eventHr = sink->QueryInterface(IID_PPV_ARGS(&eventSink));
+        if (SUCCEEDED(eventHr)) {
+            eventHr = mshtmlConnectionPoint->Advise(
+                eventSink, &mshtmlEventCookie);
+            if (SUCCEEDED(eventHr)) mshtmlEventSink = eventSink;
+        }
+        sink->Release();
+    }
+    if (FAILED(eventHr)) {
+        reportInitFailure(L"Advise(DWebBrowserEvents2)", eventHr);
+        if (mshtmlConnectionPoint && mshtmlEventCookie)
+            mshtmlConnectionPoint->Unadvise(mshtmlEventCookie);
+        mshtmlConnectionPoint.Release();
+        return -1;
+    }
+    const HRESULT silentResult =
+        mshtmlBrowser->put_Silent(debug ? VARIANT_FALSE : VARIANT_TRUE);
+    if (FAILED(silentResult)) {
+        reportInitFailure(L"IWebBrowser2::put_Silent", silentResult);
+        return -1;
+    }
+    if (!SetTimer(hwnd, 1, 100, nullptr)) {
+        reportInitFailure(L"SetTimer", HRESULT_FROM_WIN32(GetLastError()));
+        return -1;
+    }
+    init_done = true;
+    setTitle(title);
+    if (fullscreen) setFullscreen(true);
+    setBgColor(bgR, bgG, bgB, bgA);
+    prepareLocalStartPage();
+    mshtmlInitialNavigationPending = true;
+    return 0;
+}
+
+void WebView::setFullscreenFromJS(bool allow) { fullscreenFromJS = allow; }
+
+void WebView::setBgColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (!init_done) {
+        bgR = r;
+        bgG = g;
+        bgB = b;
+        bgA = a;
+    }
+}
+
+void WebView::navigate(std::wstring u) {
+    if (!init_done) {
+        url = u;
+        return;
+    }
+    mshtmlInitialNavigationPending = false;
+    if (localFileOnly && !isAllowedLocalDocument(u.c_str())) {
+        showForbiddenPage();
+        return;
+    }
+    if (localNotFoundPage && u == url) {
+        CComPtr<IDispatch> dispatch;
+        CComPtr<IHTMLDocument2> document;
+        if (SUCCEEDED(mshtmlBrowser->get_Document(&dispatch)) && dispatch &&
+            SUCCEEDED(dispatch->QueryInterface(IID_PPV_ARGS(&document))) &&
+            document) {
+            SAFEARRAY* html = SafeArrayCreateVector(VT_VARIANT, 0, 1);
+            if (!html) return;
+            LONG index = 0;
+            CComVariant markup(L"<title>Not Found</title><h1>Not Found</h1>");
+            if (SUCCEEDED(SafeArrayPutElement(html, &index, &markup)))
+                document->write(html);
+            SafeArrayDestroy(html);
+            document->close();
+        }
+        return;
+    }
+    CComVariant address(u.c_str());
+    CComVariant flags, targetFrame, postData, headers;
+    const HRESULT navigateResult = mshtmlBrowser->Navigate2(
+        &address, &flags, &targetFrame, &postData, &headers);
+    if (FAILED(navigateResult)) {
+        wchar_t message[256]{};
+        swprintf_s(message, L"MSHTML Navigate2 failed (HRESULT 0x%08lX).",
+                   static_cast<unsigned long>(navigateResult));
+        MessageBox(hwnd, message, L"MSHTML error", MB_OK | MB_ICONERROR);
+    }
+}
+
+void WebView::eval(const std::wstring& js) {
+    if (!init_done) { pendingEval += js + L"\n"; return; }
+    CComPtr<IDispatch> disp;
+    CComPtr<IHTMLDocument2> doc;
+    CComPtr<IHTMLWindow2> win;
+    if (SUCCEEDED(mshtmlBrowser->get_Document(&disp)) && disp &&
+        SUCCEEDED(disp->QueryInterface(IID_PPV_ARGS(&doc))) && doc &&
+        SUCCEEDED(doc->get_parentWindow(&win)) && win) {
+        CComBSTR script(js.c_str()), language(L"javascript");
+        win->execScript(script, language, nullptr);
+    } else {
+        pendingEval += js + L"\n";
+    }
+}
+
+void WebView::exit() { KillTimer(hwnd, 1); PostQuitMessage(WM_QUIT); }
+
+void WebView::resize() {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    if (mshtmlHost) MoveWindow(mshtmlHost, 0, 0, rc.right, rc.bottom, TRUE);
+}
+
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
 int WebView::init() {
     // Initialize autorelease pool
@@ -825,6 +1673,35 @@ int WebView::init() {
 
     class_replaceMethod(
         [WindowDelegate class],
+        @selector(webView:decidePolicyForNavigationAction:decisionHandler:),
+        imp_implementationWithBlock(
+            [=](id, SEL, WKWebView* view, WKNavigationAction* action,
+                void (^decisionHandler)(WKNavigationActionPolicy)) {
+                NSURL* target = [[action request] URL];
+                BOOL local = [target isFileURL] &&
+                             ([[target host] length] == 0 ||
+                              [[[target host] lowercaseString]
+                                  isEqualToString:@"localhost"]);
+                BOOL blank = [[target absoluteString]
+                                  isEqualToString:@"about:blank"];
+                const BOOL notFound = this->localNotFoundPage &&
+                    [[target absoluteString] isEqualToString:
+                        @"data:text/html,%3Ctitle%3ENot%20Found%3C/title%3E%3Ch1%3ENot%20Found%3C/h1%3E"];
+                const BOOL allowed = !this->localFileOnly || local || blank || notFound;
+                decisionHandler(allowed ? WKNavigationActionPolicyAllow
+                                        : WKNavigationActionPolicyCancel);
+                if (!allowed) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [view loadHTMLString:
+                                  @"<title>Forbidden</title><h1>Forbidden</h1>"
+                                  baseURL:nil];
+                    });
+                }
+            }),
+        "v@:@@@");
+
+    class_replaceMethod(
+        [WindowDelegate class],
         @selector(userContentController:didReceiveScriptMessage:),
         imp_implementationWithBlock(
             [=](id, SEL, WKScriptMessage* scriptMessage) {
@@ -844,6 +1721,7 @@ int WebView::init() {
     [controller addScriptMessageHandler:delegate name:@"webview"];
     // Set delegate to window
     [window setDelegate:delegate];
+    [webview setNavigationDelegate:delegate];
 
     // Initialize application
     [NSApplication sharedApplication];
@@ -866,6 +1744,7 @@ int WebView::init() {
         setFullscreen(true);
     }
     setBgColor(bgR, bgG, bgB, bgA);
+    prepareLocalStartPage();
     navigate(url);
 
     return 0;
@@ -919,6 +1798,12 @@ bool WebView::run() {
 void WebView::navigate(std::string u) {
     if (!init_done) {
         url = u;
+    } else if (localFileOnly && !isAllowedLocalDocument(u)) {
+        showForbiddenPage();
+        return;
+    } else if (localNotFoundPage && u == url) {
+        [webview loadHTMLString:@"<title>Not Found</title><h1>Not Found</h1>"
+                        baseURL:nil];
     } else if (u.rfind("data:", 0) == 0) {
         [webview loadHTMLString:[NSString stringWithUTF8String:u.c_str()]
                         baseURL:nil];
@@ -973,6 +1858,37 @@ int WebView::init() {
 
     // WebView
     webview = webkit_web_view_new_with_user_content_manager(cm);
+    g_signal_connect(
+        G_OBJECT(webview), "decide-policy",
+        G_CALLBACK(+[](WebKitWebView* view, WebKitPolicyDecision* decision,
+                       WebKitPolicyDecisionType type, gpointer data) -> gboolean {
+            auto* self = static_cast<WebView*>(data);
+            if (!self->localFileOnly ||
+                (type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
+                 type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)) {
+                return FALSE;
+            }
+            auto* navigation = WEBKIT_NAVIGATION_POLICY_DECISION(decision);
+            auto* action = webkit_navigation_policy_decision_get_navigation_action(
+                navigation);
+            auto* request = webkit_navigation_action_get_request(action);
+            const char* uri = webkit_uri_request_get_uri(request);
+            if (uri && self->isAllowedLocalDocument(uri)) {
+                if (type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION) {
+                    webkit_web_view_load_uri(view, uri);
+                    webkit_policy_decision_ignore(decision);
+                    return TRUE;
+                }
+                return FALSE;
+            }
+            webkit_policy_decision_ignore(decision);
+            g_idle_add(+[](gpointer arg) -> gboolean {
+                static_cast<WebView*>(arg)->showForbiddenPage();
+                return G_SOURCE_REMOVE;
+            }, self);
+            return TRUE;
+        }),
+        this);
     g_signal_connect(G_OBJECT(webview), "load-changed",
                      G_CALLBACK(webview_load_changed_cb), this);
     gtk_container_add(GTK_CONTAINER(scroller), webview);
@@ -1011,6 +1927,7 @@ int WebView::init() {
         setFullscreen(true);
     }
     setBgColor(bgR, bgG, bgB, bgA);
+    prepareLocalStartPage();
     navigate(url);
 
     // Finish
@@ -1060,6 +1977,13 @@ bool WebView::run() {
 void WebView::navigate(std::string u) {
     if (!init_done) {
         url = u;
+    } else if (localFileOnly && !isAllowedLocalDocument(u)) {
+        showForbiddenPage();
+        return;
+    } else if (localNotFoundPage && u == url) {
+        webkit_web_view_load_html(WEBKIT_WEB_VIEW(webview),
+                                  "<title>Not Found</title><h1>Not Found</h1>",
+                                  nullptr);
     } else {
         webkit_web_view_load_uri(WEBKIT_WEB_VIEW(webview), u.c_str());
     }

@@ -7,8 +7,17 @@ project(webview
   HOMEPAGE_URL "https://github.com/MichaelKim/webview")
 include(cmake/Settings.cmake)
 
+# CMake's MSVC defaults add /W3 globally. The project sets /W4 on its targets,
+# so remove that default from the consuming directory to avoid D9025.
+if(MSVC AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+	string(REGEX REPLACE "(^| )/W3( |$)" "\\1\\2" CMAKE_CXX_FLAGS
+		"${CMAKE_CXX_FLAGS}")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" PARENT_SCOPE)
+endif()
+
 if(WIN32)
 	option(WEBVIEW_USE_EDGE "Enables Edge Chromium for Windows" ON)
+	option(WEBVIEW_USE_MSHTML "Enables the legacy MSHTML engine for Windows" OFF)
 endif()
 
 add_library(project_options INTERFACE)
@@ -36,14 +45,30 @@ if(APPLE)
 	# Enable Objective C++
 	enable_language(OBJCXX)
 	set(WEBVIEW_COMPILE_OPTS "-ObjC++")
+elseif(WIN32 AND WEBVIEW_USE_MSHTML)
+	set(WEBVIEW_COMPILE_DEFS WEBVIEW_MSHTML)
+	set(WEBVIEW_LIBS ole32 oleaut32 uuid)
+	if(WEBVIEW_USE_EDGE)
+		message(STATUS "WEBVIEW_USE_MSHTML takes precedence over WEBVIEW_USE_EDGE")
+	endif()
+	set(WEBVIEW_USE_EDGE OFF)
 elseif(WIN32 AND WEBVIEW_USE_EDGE)
 	set(WEBVIEW_COMPILE_DEFS WEBVIEW_EDGE)
-	set(WEBVIEW_WEBVIEW2_VERSION 1.0.864.35)
-	set(WEBVIEW_WIL_VERSION 1.0.210204.1)	
+	set(WEBVIEW_WEBVIEW2_VERSION 1.0.4258.31)
+	set(WEBVIEW_WIL_VERSION 1.0.260126.7)
 	
 	option(WEBVIEW_STATIC_WEBVIEW2 "Statically link the WebView2 loader library (WEBVIEW_EDGE only)" OFF)
 
 	set(WEBVIEW_WEBVIEW2_PATH ${CMAKE_BINARY_DIR}/packages/Microsoft.Web.WebView2.${WEBVIEW_WEBVIEW2_VERSION}/build/native)
+	if(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64" OR
+	   CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64" OR
+	   CMAKE_SYSTEM_PROCESSOR MATCHES "^[Aa][Rr][Mm]64")
+		set(WEBVIEW_WEBVIEW2_ARCH arm64)
+	elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+		set(WEBVIEW_WEBVIEW2_ARCH x64)
+	else()
+		set(WEBVIEW_WEBVIEW2_ARCH x86)
+	endif()
 
 	# Add NuGet packages
 	install_nuget(cmake/packages-edge.config.in)
@@ -54,11 +79,11 @@ elseif(WIN32 AND WEBVIEW_USE_EDGE)
 
 	# Statically link WebView2
 	if(WEBVIEW_STATIC_WEBVIEW2)
-		set(WEBVIEW_LIBS ${WEBVIEW_WEBVIEW2_PATH}/x64/WebView2LoaderStatic.lib version.lib)
+		set(WEBVIEW_LIBS ${WEBVIEW_WEBVIEW2_PATH}/${WEBVIEW_WEBVIEW2_ARCH}/WebView2LoaderStatic.lib version.lib)
 	else()
-		set(WEBVIEW_LIBS ${WEBVIEW_WEBVIEW2_PATH}/x64/WebView2Loader.dll.lib)
+		set(WEBVIEW_LIBS ${WEBVIEW_WEBVIEW2_PATH}/${WEBVIEW_WEBVIEW2_ARCH}/WebView2Loader.dll.lib)
 		configure_file(
-			${WEBVIEW_WEBVIEW2_PATH}/x64/WebView2Loader.dll
+			${WEBVIEW_WEBVIEW2_PATH}/${WEBVIEW_WEBVIEW2_ARCH}/WebView2Loader.dll
 			${CMAKE_BINARY_DIR}/WebView2Loader.dll
 			COPYONLY
 		)
