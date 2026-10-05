@@ -106,9 +106,9 @@ To use `cl.exe` directly, you'd need to grab the NuGet packages manually.
 
 WebView2 background colors support only fully transparent (`a = 0`) or fully opaque (`a = 255`) alpha; intermediate alpha values are treated as opaque.
 
-## MSHTML (Internet Explorer)
+## MSHTML (Trident)
 
-MSHTML is available as a legacy Windows backend for applications that need the system Internet Explorer engine. It uses the ATL ActiveX host, so install the ATL component for your Visual Studio C++ toolchain. This backend is deprecated by Microsoft and uses the IE document mode configured for the hosting application.
+MSHTML is available as a legacy Windows backend for applications that need the system Trident rendering engine. It uses the ATL ActiveX host, so install the ATL component for your Visual Studio C++ toolchain. This backend is deprecated by Microsoft and uses the document mode configured for the hosting application.
 
 With CMake, configure with `-DWEBVIEW_USE_MSHTML=ON`. This selects `WEBVIEW_MSHTML` and takes precedence over the default Chromium Edge option. For a manual build, define `WEBVIEW_MSHTML` and link `ole32.lib`, `oleaut32.lib`, and `uuid.lib`.
 
