@@ -225,10 +225,11 @@ file URLs are blocked. Call this before `init()`. If no local file URL was
 supplied, the app loads `index.html` from its current working directory; if that
 file is missing, it shows a built-in Not Found page.
 
-Blocked document navigations are canceled and replaced with a built-in
-Forbidden page. Calls to `navigate()` are checked as well. Subresource loads
-such as `<script src>` and `<link href>` are not filtered, so they may still
-access remote URLs.
+Top-level and frame document navigations are checked. Blocked requests show a
+built-in Forbidden page. Local new-window requests are opened in the existing
+view; external new-window requests are blocked. Calls to `navigate()` are
+checked as well. Subresource loads such as `<script src>` and `<link href>` are
+not filtered, so they may still access remote URLs.
 
 ```c++
 wv::WebView w{800, 600, true, true, Str("Local app")};

@@ -64,6 +64,7 @@ class MshtmlNavigationSink
     : public CComObjectRootEx<CComSingleThreadModel>, public IDispatch {
 public:
     std::function<void(BSTR, VARIANT_BOOL*)> beforeNavigate;
+    std::function<void(BSTR, VARIANT_BOOL*)> newWindowRequested;
     std::function<void(BSTR, LONG)> navigateError;
 
     BEGIN_COM_MAP(MshtmlNavigationSink)
@@ -111,14 +112,17 @@ public:
         }
         VARIANT* url = nullptr;
         VARIANT* cancelArg = nullptr;
+        bool isNewWindow = false;
         if (id == beforeNavigate2 && params->cArgs >= 7) {
             url = &params->rgvarg[5];
             cancelArg = &params->rgvarg[0];
         } else if (id == newWindow3 && params->cArgs >= 5) {
             url = &params->rgvarg[0];
             cancelArg = &params->rgvarg[3];
+            isNewWindow = true;
         } else if (id == newWindow2 && params->cArgs >= 2) {
             cancelArg = &params->rgvarg[0];
+            isNewWindow = true;
         } else {
             return S_OK;
         }
@@ -132,7 +136,10 @@ public:
             target = value->bstrVal;
         else if (value && value->vt == (VT_BSTR | VT_BYREF) && value->pbstrVal)
             target = *value->pbstrVal;
-        if (beforeNavigate) beforeNavigate(target, cancel);
+        if (isNewWindow && newWindowRequested)
+            newWindowRequested(target, cancel);
+        else if (beforeNavigate)
+            beforeNavigate(target, cancel);
         return S_OK;
     }
 };
@@ -142,6 +149,7 @@ public:
 #if defined(WEBVIEW_WIN)
 #define WIN32_LEAN_AND_MEAN
 #pragma comment(lib, "windowsapp")
+#pragma comment(lib, "Shlwapi.lib")
 
 #include <objbase.h>
 #include <shellscalingapi.h>
@@ -255,7 +263,19 @@ inline bool isLocalFilePath(const wchar_t* path) {
 }
 #endif
 inline bool isLocalFileUri(const std::string& uri) {
-    return uri.rfind("file:///", 0) == 0 && uri.size() > 8;
+    const auto startsWith = [&uri](const char* prefix) {
+        for (size_t i = 0; prefix[i] != '\0'; ++i) {
+            char ch = uri.size() > i ? uri[i] : '\0';
+            if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+            if (ch != prefix[i]) return false;
+        }
+        return true;
+    };
+    if (startsWith("file:///"))
+        return uri.size() > 8 && uri[8] != '/' && uri[8] != '\\';
+    if (startsWith("file://localhost/"))
+        return uri.size() > 17 && uri[17] != '/' && uri[17] != '\\';
+    return false;
 }
 
 class WebView {
@@ -409,6 +429,7 @@ private:
         return isLocalFileUri(uri) || isLocalFilePath(uri) ||
                (uri && _wcsicmp(uri, FORBIDDEN_PAGE_URI) == 0) ||
                (uri && _wcsicmp(uri, L"about:blank") == 0) ||
+               (uri && _wcsicmp(uri, L"about:srcdoc") == 0) ||
                (localNotFoundPage && uri &&
                 _wcsicmp(uri, L"data:text/html,%3Ctitle%3ENot%20Found%3C/title%3E%3Ch1%3ENot%20Found%3C/h1%3E") == 0);
     }
@@ -416,6 +437,7 @@ private:
     bool isAllowedLocalDocument(const std::string& uri) const {
         return isLocalFileUri(uri) ||
                uri == "about:blank" ||
+               uri == "about:srcdoc" ||
                uri == "data:text/html,%3Ctitle%3EForbidden%3C/title%3E%3Ch1%3EForbidden%3C/h1%3E" ||
                (localNotFoundPage &&
                 uri == "data:text/html,%3Ctitle%3ENot%20Found%3C/title%3E%3Ch1%3ENot%20Found%3C/h1%3E");
@@ -455,6 +477,7 @@ private:
     DWORD mshtmlEventCookie = 0;
     bool mshtmlOleInitialized = false;
     bool mshtmlInitialNavigationPending = false;
+    std::wstring mshtmlPendingNewWindowUrl;
     std::wstring mshtmlNavigationError;
     String pendingEval;
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
@@ -711,7 +734,8 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 w->resize();
             }
             return DefWindowProc(hwnd, msg, wparam, lparam);
-#if defined(WEBVIEW_EDGE) || defined(WEBVIEW_MSHTML)
+#if defined(WEBVIEW_WIN) || defined(WEBVIEW_EDGE) || \
+    defined(WEBVIEW_MSHTML)
         case WM_APP + 42:
             if (w != nullptr) w->showForbiddenPage();
             return 0;
@@ -722,6 +746,13 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 MessageBox(hwnd, w->mshtmlNavigationError.c_str(),
                            L"MSHTML navigation error",
                            MB_OK | MB_ICONERROR);
+            return 0;
+        case WM_APP + 45:
+            if (w != nullptr && !w->mshtmlPendingNewWindowUrl.empty()) {
+                auto target = std::move(w->mshtmlPendingNewWindowUrl);
+                w->mshtmlPendingNewWindowUrl.clear();
+                w->navigate(std::move(target));
+            }
             return 0;
 #endif
 #if defined(WEBVIEW_EDGE)
@@ -905,13 +936,30 @@ int WebView::init() {
         if (localFileOnly &&
             !isAllowedLocalDocument(args.Uri().AbsoluteUri().c_str())) {
             args.Cancel(true);
-            showForbiddenPage();
+            PostMessage(hwnd, WM_APP + 42, 0, 0);
             return;
         }
         if (!initializeScriptRegistered) {
             webview.AddInitializeScript(inject);
             initializeScriptRegistered = true;
         }
+    });
+    webview.FrameNavigationStarting([this](const auto&, const auto& args) {
+        if (localFileOnly &&
+            !isAllowedLocalDocument(args.Uri().AbsoluteUri().c_str())) {
+            args.Cancel(true);
+            PostMessage(hwnd, WM_APP + 42, 0, 0);
+        }
+    });
+    webview.NewWindowRequested([this](const auto&, const auto& args) {
+        if (!localFileOnly) return;
+        args.Handled(true);
+        const auto targetUri = args.Uri().AbsoluteUri();
+        const std::wstring target(targetUri.c_str());
+        if (isAllowedLocalDocument(target.c_str()))
+            navigate(target);
+        else
+            PostMessage(hwnd, WM_APP + 42, 0, 0);
     });
 
     // Detect fullscreen request from JS
@@ -935,13 +983,7 @@ int WebView::init() {
     }
     setBgColor(bgR, bgG, bgB, bgA);
     prepareLocalStartPage();
-    mshtmlInitialNavigationPending = true;
-    if (!PostMessage(hwnd, WM_APP + 44, 0, 0)) {
-        mshtmlInitialNavigationPending = false;
-        reportInitFailure(L"PostMessage(initial navigation)",
-                          HRESULT_FROM_WIN32(GetLastError()));
-        return -1;
-    }
+    navigate(url);
 
     return 0;
     } catch (const winrt::hresult_error&) {
@@ -1108,6 +1150,31 @@ int WebView::init() {
             nullptr);
         if (FAILED(hr)) {
             MessageBox(hwnd, L"Could not connect WebView2 navigation events.",
+                       L"WebView2 error", MB_ICONERROR | MB_OK);
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return hr;
+        }
+
+        hr = webviewWindow->add_FrameNavigationStarting(
+            Callback<ICoreWebView2NavigationStartingEventHandler>(
+                [this](ICoreWebView2*,
+                       ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                    if (!localFileOnly || !args) return S_OK;
+                    LPWSTR uri = nullptr;
+                    const HRESULT uriResult = args->get_Uri(&uri);
+                    const bool allowed = SUCCEEDED(uriResult) &&
+                                         isAllowedLocalDocument(uri);
+                    CoTaskMemFree(uri);
+                    if (allowed) return S_OK;
+                    const HRESULT cancelResult = args->put_Cancel(TRUE);
+                    PostMessage(hwnd, WM_APP + 42, 0, 0);
+                    return cancelResult;
+                })
+                .Get(),
+            nullptr);
+        if (FAILED(hr)) {
+            MessageBox(hwnd,
+                       L"Could not connect WebView2 frame navigation events.",
                        L"WebView2 error", MB_ICONERROR | MB_OK);
             PostMessage(hwnd, WM_CLOSE, 0, 0);
             return hr;
@@ -1417,6 +1484,17 @@ int WebView::init() {
             if (cancel) *cancel = VARIANT_TRUE;
             PostMessage(hwnd, WM_APP + 42, 0, 0);
         };
+        sink->newWindowRequested =
+            [this](BSTR target, VARIANT_BOOL* cancel) {
+                if (!localFileOnly) return;
+                if (cancel) *cancel = VARIANT_TRUE;
+                if (isAllowedLocalDocument(target)) {
+                    mshtmlPendingNewWindowUrl = target;
+                    PostMessage(hwnd, WM_APP + 45, 0, 0);
+                } else {
+                    PostMessage(hwnd, WM_APP + 42, 0, 0);
+                }
+            };
         sink->navigateError = [this](BSTR target, LONG status) {
             wchar_t statusText[16]{};
             swprintf_s(statusText, L"%08lX",
