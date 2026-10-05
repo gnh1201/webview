@@ -11,6 +11,7 @@
   - [webview.setFullscreen](#setfullscreen)
   - [webview.setFullscreenFromJS](#setfullscreenfromjs)
   - [webview.setBgColor](#setbgcolor)
+  - [webview.setLocalFileOnly](#setlocalfileonly)
   - [webview.run](#run)
   - [webview.navigate](#navigate)
   - [webview.preEval](#preeval)
@@ -211,6 +212,28 @@ void setBgColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 - g: Green component of the color (0 to 255)
 - b: Blue component of the color (0 to 255)
 - a: Alpha component of the color (0 to 255)
+
+### `setLocalFileOnly`
+
+```c++
+void setLocalFileOnly(bool enabled);
+```
+
+When enabled, document navigations are allowed only to local files using
+absolute `file:///...` URLs. Remote pages, non-file schemes, and network-share
+file URLs are blocked. Call this before `init()`. If no local file URL was
+supplied, the app loads `index.html` from its current working directory; if that
+file is missing, it shows a built-in Not Found page.
+
+Blocked document navigations are canceled and replaced with a built-in
+Forbidden page. Calls to `navigate()` are checked as well. Subresource loads
+such as `<script src>` and `<link href>` are not filtered, so they may still
+access remote URLs.
+
+```c++
+wv::WebView w{800, 600, true, true, Str("Local app")};
+w.setLocalFileOnly(true);
+```
 
 ### `run`
 
