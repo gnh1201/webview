@@ -1,80 +1,74 @@
 # webview
 
-[![CMake CI](https://github.com/MichaelKim/webview/actions/workflows/ci.yaml/badge.svg)](https://github.com/MichaelKim/webview/actions/workflows/ci.yaml)
+A tiny C++ webview library focused on Windows. It provides backends for Microsoft Edge WebView2 (Chromium), EdgeHTML (legacy Edge), and MSHTML (Internet Explorer).
 
-A tiny cross-platform webview library written in C++ using Edge on Windows (EdgeHTML and Chromium) or the legacy MSHTML engine, Webkit on MacOS, and WebkitGTK on Linux.
-
-Inspired from zerge's [webview](https://github.com/webview/webview), this library was rewritten with several priorities:
-
-- A more "C++"-like API
-- Support for Microsoft Edge on Windows
-- Replaced Objective-C runtime C code with actual Objective-C code
+This repository is [forked from MichaelKim/webview](https://github.com/MichaelKim/webview) and builds on ideas from [zerge's webview](https://github.com/webview/webview). Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
 
 ## Support
 
-|            | Windows            | Windows            | Windows       | MacOS                            | Linux                         |
-| ---------- | ------------------ | ------------------ | ------------- | -------------------------------- | ----------------------------- |
-| Version    | Windows 10, v1809+ | Windows 7, 8.1, 10 | Windows       | Tested on MacOS Mojave, Catalina | Tested on Ubuntu 18.04.02 LTS |
-| Web Engine | EdgeHTML           | Chromium           | MSHTML (IE)   | Webkit                           | WebKit                        |
-| GUI        | Windows API        | Windows API        | Windows API   | Cocoa                            | GTK                           |
+| Platform | Backend | Engine | Notes |
+| --- | --- | --- | --- |
+| Windows | WebView2 (`WEBVIEW_EDGE`) | Microsoft Edge (Chromium) | Recommended; requires the WebView2 Runtime. |
+| Windows | EdgeHTML (`WEBVIEW_WIN`) | Microsoft Edge Legacy | Requires Windows 10 version 1809 or later; deprecated. |
+| Windows | MSHTML (`WEBVIEW_MSHTML`) | Internet Explorer | Legacy compatibility only; requires ATL. |
 
-## MSHTML support for WelsonJS
+The macOS WebKit backend was last listed as tested on macOS Mojave and Catalina. The Linux WebKitGTK backend was last listed as tested on Ubuntu 18.04.02 LTS. Neither has been tested against newer releases as part of recent Windows-focused work.
 
-MSHTML support was added to serve [WelsonJS](https://github.com/gnh1201/welsonjs), a lightweight Windows JavaScript framework for application and industrial-system automation. WelsonJS uses JavaScript (and transpiled languages) together with HTML/CSS, including in legacy or resource-constrained Windows environments. The MSHTML backend lets it host that web-based UI with the system's Internet Explorer engine when newer browser runtimes are unavailable or unsuitable. MSHTML is deprecated, so use it only when this legacy compatibility is needed.
+## WelsonJS and MSHTML
 
-The existing MSHTML implementation was strengthened in several areas:
+MSHTML support was added for [WelsonJS](https://github.com/gnh1201/welsonjs), a lightweight Windows JavaScript framework used to build applications and automate industrial systems. Its applications combine JavaScript (including transpiled languages) with HTML and CSS, and may need to run in legacy or resource-constrained Windows environments. The MSHTML backend allows those interfaces to use the Internet Explorer engine built into Windows when a newer browser runtime is unavailable or unsuitable. Because MSHTML is deprecated, use it only when that compatibility is required.
 
-- COM/OLE initialization and teardown are tracked and balanced, including failures during initialization.
-- Browser event handling now intercepts navigation and new-window requests, and the event connection is released during shutdown.
-- Local-file-only mode is enforced for document navigation; blocked external page requests display a built-in Forbidden page. As with the other backends, subresource requests such as scripts and stylesheets are not filtered.
-- Initialization, host creation, and message/JavaScript bridging paths check failures and clean up their resources more defensively.
+The MSHTML implementation includes balanced COM/OLE initialization and cleanup, navigation and new-window event handling, defensive initialization and teardown, and JavaScript/native callback support. In local-file-only mode, external document and frame navigation is blocked and displays a built-in Forbidden page; subresource loads such as scripts and stylesheets are not filtered.
 
-See [Build Steps](docs/build.md#mshtml-internet-explorer) for selecting and building the MSHTML backend.
+See [MSHTML build instructions](docs/build.md#mshtml-internet-explorer) and the [`mshtml` example](examples/mshtml/).
+
+## Build and examples
+
+See [Build Steps](docs/build.md) for backend requirements and configuration. For a Visual Studio x64 WebView2 build, configure with `-A x64`; use `-A Win32` for 32-bit. The CMake configuration selects the WebView2 loader for the chosen architecture.
+
+Examples are in [`examples/`](examples/):
+
+- `basic` opens `https://google.com`.
+- `local-only` loads `index.html` from the current directory and displays Not Found if it is missing. External page navigation is blocked with a Forbidden page.
+- `mshtml` demonstrates the legacy MSHTML backend, local content, and a JavaScript-to-native callback.
+
+The local-only setting applies to document navigation, not to resources referenced by the page. Do not treat it as a network sandbox for untrusted HTML.
+
+## Usage
+
+Include `webview.hpp` and link/configure the dependencies for the selected backend (see [Build Steps](docs/build.md)). By default, the Windows CMake configuration uses WebView2.
+
+```cpp
+#include "webview.hpp"
+
+WEBVIEW_MAIN {
+  wv::WebView webview{800, 600, true, true, Str("Hello world!")};
+  webview.navigate(Str("https://google.com"));
+
+  if (webview.init() == -1) {
+    return 1;
+  }
+
+  while (webview.run() == 0)
+    ;
+
+  return 0;
+}
+```
+
+To enable local-file-only document navigation, set the option before initialization:
+
+```cpp
+webview.setLocalFileOnly(true);
+```
+
+The local-only example demonstrates this option. On Windows, string values use `std::wstring`; wrap string literals with `Str("...")`. `WEBVIEW_MAIN` selects the appropriate Win32 or standard C++ entry point.
+
+The library supports HTTP(S), local `file:///` URLs, and inline `data:` URLs. EdgeHTML does not support local file URLs; see [Limitations](docs/limitations.md).
 
 ## Documentation
 
 - [Build Steps](docs/build.md)
 - [API Reference](docs/api.md)
 - [Limitations](docs/limitations.md)
-
-## Usage
-
-```c++
-#include "webview.h"
-
-WEBVIEW_MAIN {
-  // Create a 800 x 600 webview that shows Google
-  wv::WebView w{800, 600, true, true, Str("Hello world!"), Str("http://google.com")};
-
-  if (w.init() == -1) {
-    return 1;
-  }
-
-  while (w.run() == 0);
-
-  return 0;
-}
-```
-
-Since Windows (WinAPI) uses `std::wstring`s, all string literals should be wrapped in the macro `Str(s)`.
-
-The following URL schemes are supported:
-
-- HTTP(S): `http://` and `https://`
-- Local file: `file:///`, make sure to point to an `html` file
-  - Not supported in Edge Legacy (see [Limitations](docs/limitations.md))
-- Inline data: `data:text/html,<html>...</html>`
-
-Check out example programs in the [`examples/`](examples/) directory in this repo.
-
-Note: `WEBVIEW_MAIN` is a macro that resolves to the correct entry point:
-
-```c++
-#ifdef WEBVIEW_WIN
-#define WEBVIEW_MAIN int __stdcall WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
-#else
-#define WEBVIEW_MAIN int main(int, char **)
-#endif
-```
-
-This is needed since Win32 GUI applications uses `WinMain` as the entry point rather than the standard `main`. You can write your own main for more control, but make sure to use `WinMain` if you need to support Windows.
+- [Examples](examples/README.md)
