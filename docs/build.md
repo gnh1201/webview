@@ -114,6 +114,8 @@ With CMake, configure with `-DWEBVIEW_USE_MSHTML=ON`. This selects `WEBVIEW_MSHT
 
 The backend implements navigation, JavaScript evaluation, CSS injection, window callbacks, title and window sizing. JavaScript callbacks are relayed through the document title, so page title changes are reserved while a callback is being delivered.
 
+See the Windows-only [`mshtml` example](../examples/mshtml/) for a local HTML page, a native callback, and local-file-only navigation. Its CMake project selects MSHTML automatically.
+
 ## MacOS
 
 webview depends on the Cocoa and Webkit frameworks. Also, make sure your compiler supports Objective-C++ (g++ and clang++ should both work).

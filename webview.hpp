@@ -43,12 +43,28 @@
 #include <atlhost.h>
 #include <shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
+namespace wv::detail {
+class AtlHostingModule final : public ATL::CAtlModule {
+public:
+    HRESULT AddCommonRGSReplacements(IRegistrarBase*) throw() override {
+        return E_NOTIMPL;
+    }
+};
+
+inline void ensureAtlHostingModule() {
+    if (ATL::_pAtlModule == nullptr) {
+        static AtlHostingModule module;
+        (void)module;
+    }
+}
+}  // namespace wv::detail
 #pragma warning(push)
 #pragma warning(disable : 4265)
 class MshtmlNavigationSink
     : public CComObjectRootEx<CComSingleThreadModel>, public IDispatch {
 public:
     std::function<void(BSTR, VARIANT_BOOL*)> beforeNavigate;
+    std::function<void(BSTR, LONG)> navigateError;
 
     BEGIN_COM_MAP(MshtmlNavigationSink)
     COM_INTERFACE_ENTRY(IDispatch)
@@ -69,8 +85,30 @@ public:
                       VARIANT*, EXCEPINFO*, UINT*) override {
         constexpr DISPID beforeNavigate2 = 250;
         constexpr DISPID newWindow2 = 251;
+        constexpr DISPID navigateErrorEvent = 271;
         constexpr DISPID newWindow3 = 273;
         if (!params) return S_OK;
+        if (id == navigateErrorEvent && params->cArgs >= 4) {
+            VARIANT* urlArg = &params->rgvarg[3];
+            VARIANT* statusArg = &params->rgvarg[1];
+            const VARIANT* value = urlArg;
+            while (value && value->vt == (VT_VARIANT | VT_BYREF))
+                value = value->pvarVal;
+            BSTR target = nullptr;
+            if (value && value->vt == VT_BSTR)
+                target = value->bstrVal;
+            else if (value && value->vt == (VT_BSTR | VT_BYREF) &&
+                     value->pbstrVal)
+                target = *value->pbstrVal;
+            LONG status = 0;
+            if (statusArg->vt == VT_I4)
+                status = statusArg->lVal;
+            else if (statusArg->vt == (VT_I4 | VT_BYREF) &&
+                     statusArg->plVal)
+                status = *statusArg->plVal;
+            if (navigateError) navigateError(target, status);
+            return S_OK;
+        }
         VARIANT* url = nullptr;
         VARIANT* cancelArg = nullptr;
         if (id == beforeNavigate2 && params->cArgs >= 7) {
@@ -208,6 +246,12 @@ inline bool isLocalFileUri(const wchar_t* uri) {
            ((uri[drive] >= L'A' && uri[drive] <= L'Z') ||
             (uri[drive] >= L'a' && uri[drive] <= L'z')) &&
            uri[drive + 1] == L':' && uri[drive + 2] == L'/';
+}
+inline bool isLocalFilePath(const wchar_t* path) {
+    return path &&
+           ((path[0] >= L'A' && path[0] <= L'Z') ||
+            (path[0] >= L'a' && path[0] <= L'z')) &&
+           path[1] == L':' && (path[2] == L'\\' || path[2] == L'/');
 }
 #endif
 inline bool isLocalFileUri(const std::string& uri) {
@@ -362,7 +406,7 @@ private:
     }
 #if defined(WEBVIEW_IS_WIN)
     bool isAllowedLocalDocument(const wchar_t* uri) const {
-        return isLocalFileUri(uri) ||
+        return isLocalFileUri(uri) || isLocalFilePath(uri) ||
                (uri && _wcsicmp(uri, FORBIDDEN_PAGE_URI) == 0) ||
                (uri && _wcsicmp(uri, L"about:blank") == 0) ||
                (localNotFoundPage && uri &&
@@ -410,6 +454,8 @@ private:
     CComPtr<IDispatch> mshtmlEventSink;
     DWORD mshtmlEventCookie = 0;
     bool mshtmlOleInitialized = false;
+    bool mshtmlInitialNavigationPending = false;
+    std::wstring mshtmlNavigationError;
     String pendingEval;
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
     String inject =
@@ -670,6 +716,14 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
             if (w != nullptr) w->showForbiddenPage();
             return 0;
 #endif
+#if defined(WEBVIEW_MSHTML)
+        case WM_APP + 43:
+            if (w != nullptr && !w->mshtmlNavigationError.empty())
+                MessageBox(hwnd, w->mshtmlNavigationError.c_str(),
+                           L"MSHTML navigation error",
+                           MB_OK | MB_ICONERROR);
+            return 0;
+#endif
 #if defined(WEBVIEW_EDGE)
         case WM_MOVE:
         case WM_MOVING:
@@ -681,6 +735,15 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
 #if defined(WEBVIEW_MSHTML)
         case WM_TIMER:
             if (w != nullptr && w->init_done && w->mshtmlBrowser) {
+                if (w->mshtmlInitialNavigationPending) {
+                    READYSTATE state = READYSTATE_UNINITIALIZED;
+                    if (SUCCEEDED(w->mshtmlBrowser->get_ReadyState(&state)) &&
+                        state == READYSTATE_COMPLETE) {
+                        w->mshtmlInitialNavigationPending = false;
+                        w->navigate(w->url);
+                    }
+                    return 0;
+                }
                 CComPtr<IDispatch> disp;
                 CComPtr<IHTMLDocument2> doc;
                 if (SUCCEEDED(w->mshtmlBrowser->get_Document(&disp)) && disp &&
@@ -872,7 +935,13 @@ int WebView::init() {
     }
     setBgColor(bgR, bgG, bgB, bgA);
     prepareLocalStartPage();
-    navigate(url);
+    mshtmlInitialNavigationPending = true;
+    if (!PostMessage(hwnd, WM_APP + 44, 0, 0)) {
+        mshtmlInitialNavigationPending = false;
+        reportInitFailure(L"PostMessage(initial navigation)",
+                          HRESULT_FROM_WIN32(GetLastError()));
+        return -1;
+    }
 
     return 0;
     } catch (const winrt::hresult_error&) {
@@ -1288,19 +1357,50 @@ void WebView::resize() {
 #elif defined(WEBVIEW_MSHTML)
 int WebView::init() {
     if (WinInit() != 0) return -1;
+    auto reportInitFailure = [](const wchar_t* stage, HRESULT hr) {
+        wchar_t message[256]{};
+        swprintf_s(message, L"MSHTML initialization failed at %s (HRESULT 0x%08lX).",
+                   stage, static_cast<unsigned long>(hr));
+        MessageBox(nullptr, message, L"MSHTML error", MB_OK | MB_ICONERROR);
+    };
     const HRESULT oleResult = OleInitialize(nullptr);
-    if (FAILED(oleResult)) return -1;
+    if (FAILED(oleResult)) {
+        reportInitFailure(L"OleInitialize", oleResult);
+        return -1;
+    }
     mshtmlOleInitialized = true;
-    if (!AtlAxWinInit()) return -1;
+    wv::detail::ensureAtlHostingModule();
+    if (!AtlAxWinInit()) {
+        reportInitFailure(L"AtlAxWinInit", HRESULT_FROM_WIN32(GetLastError()));
+        return -1;
+    }
     RECT rc{};
     GetClientRect(hwnd, &rc);
-    mshtmlHost = CreateWindowEx(0, L"AtlAxWin", L"Shell.Explorer.2",
+    mshtmlHost = CreateWindowEx(0, _T(ATLAXWIN_CLASS), L"Shell.Explorer.2",
                                 WS_CHILD | WS_VISIBLE, 0, 0, rc.right, rc.bottom,
                                 hwnd, nullptr, GetModuleHandle(nullptr), nullptr);
     CComPtr<IUnknown> control;
-    if (!mshtmlHost || FAILED(AtlAxGetControl(mshtmlHost, &control)) ||
-        !control || FAILED(control->QueryInterface(IID_PPV_ARGS(&mshtmlBrowser))))
+    if (!mshtmlHost) {
+        reportInitFailure(L"CreateWindowEx(AtlAxWin)",
+                           HRESULT_FROM_WIN32(GetLastError()));
         return -1;
+    }
+    HRESULT controlHr = AtlAxGetControl(mshtmlHost, &control);
+    if (FAILED(controlHr) || !control) {
+        reportInitFailure(L"AtlAxGetControl", FAILED(controlHr) ? controlHr
+                                                                : E_NOINTERFACE);
+        return -1;
+    }
+    controlHr = control->QueryInterface(IID_PPV_ARGS(&mshtmlBrowser));
+    if (FAILED(controlHr)) {
+        reportInitFailure(L"QueryInterface(IWebBrowser2)", controlHr);
+        return -1;
+    }
+    controlHr = mshtmlBrowser->put_Visible(VARIANT_TRUE);
+    if (FAILED(controlHr)) {
+        reportInitFailure(L"IWebBrowser2::put_Visible", controlHr);
+        return -1;
+    }
     CComPtr<IConnectionPointContainer> connectionContainer;
     CComObject<MshtmlNavigationSink>* sink = nullptr;
     HRESULT eventHr = mshtmlBrowser->QueryInterface(
@@ -1317,6 +1417,16 @@ int WebView::init() {
             if (cancel) *cancel = VARIANT_TRUE;
             PostMessage(hwnd, WM_APP + 42, 0, 0);
         };
+        sink->navigateError = [this](BSTR target, LONG status) {
+            wchar_t statusText[16]{};
+            swprintf_s(statusText, L"%08lX",
+                       static_cast<unsigned long>(status));
+            mshtmlNavigationError = L"Failed to navigate to:\n";
+            mshtmlNavigationError += target ? target : L"(unknown URL)";
+            mshtmlNavigationError += L"\nStatus: 0x";
+            mshtmlNavigationError += statusText;
+            PostMessage(hwnd, WM_APP + 43, 0, 0);
+        };
         CComPtr<IDispatch> eventSink;
         eventHr = sink->QueryInterface(IID_PPV_ARGS(&eventSink));
         if (SUCCEEDED(eventHr)) {
@@ -1327,6 +1437,7 @@ int WebView::init() {
         sink->Release();
     }
     if (FAILED(eventHr)) {
+        reportInitFailure(L"Advise(DWebBrowserEvents2)", eventHr);
         if (mshtmlConnectionPoint && mshtmlEventCookie)
             mshtmlConnectionPoint->Unadvise(mshtmlEventCookie);
         mshtmlConnectionPoint.Release();
@@ -1334,14 +1445,20 @@ int WebView::init() {
     }
     const HRESULT silentResult =
         mshtmlBrowser->put_Silent(debug ? VARIANT_FALSE : VARIANT_TRUE);
-    if (FAILED(silentResult)) return -1;
-    if (!SetTimer(hwnd, 1, 100, nullptr)) return -1;
+    if (FAILED(silentResult)) {
+        reportInitFailure(L"IWebBrowser2::put_Silent", silentResult);
+        return -1;
+    }
+    if (!SetTimer(hwnd, 1, 100, nullptr)) {
+        reportInitFailure(L"SetTimer", HRESULT_FROM_WIN32(GetLastError()));
+        return -1;
+    }
     init_done = true;
     setTitle(title);
     if (fullscreen) setFullscreen(true);
     setBgColor(bgR, bgG, bgB, bgA);
     prepareLocalStartPage();
-    navigate(url);
+    mshtmlInitialNavigationPending = true;
     return 0;
 }
 
@@ -1361,6 +1478,7 @@ void WebView::navigate(std::wstring u) {
         url = u;
         return;
     }
+    mshtmlInitialNavigationPending = false;
     if (localFileOnly && !isAllowedLocalDocument(u.c_str())) {
         showForbiddenPage();
         return;
@@ -1382,8 +1500,16 @@ void WebView::navigate(std::wstring u) {
         }
         return;
     }
-    CComVariant address(u.c_str()), empty;
-    mshtmlBrowser->Navigate2(&address, &empty, &empty, &empty, &empty);
+    CComVariant address(u.c_str());
+    CComVariant flags, targetFrame, postData, headers;
+    const HRESULT navigateResult = mshtmlBrowser->Navigate2(
+        &address, &flags, &targetFrame, &postData, &headers);
+    if (FAILED(navigateResult)) {
+        wchar_t message[256]{};
+        swprintf_s(message, L"MSHTML Navigate2 failed (HRESULT 0x%08lX).",
+                   static_cast<unsigned long>(navigateResult));
+        MessageBox(hwnd, message, L"MSHTML error", MB_OK | MB_ICONERROR);
+    }
 }
 
 void WebView::eval(const std::wstring& js) {

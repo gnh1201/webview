@@ -18,6 +18,19 @@ Inspired from zerge's [webview](https://github.com/webview/webview), this librar
 | Web Engine | EdgeHTML           | Chromium           | MSHTML (IE)   | Webkit                           | WebKit                        |
 | GUI        | Windows API        | Windows API        | Windows API   | Cocoa                            | GTK                           |
 
+## MSHTML support for WelsonJS
+
+MSHTML support was added to serve [WelsonJS](https://github.com/gnh1201/welsonjs), a lightweight Windows JavaScript framework for application and industrial-system automation. WelsonJS uses JavaScript (and transpiled languages) together with HTML/CSS, including in legacy or resource-constrained Windows environments. The MSHTML backend lets it host that web-based UI with the system's Internet Explorer engine when newer browser runtimes are unavailable or unsuitable. MSHTML is deprecated, so use it only when this legacy compatibility is needed.
+
+The existing MSHTML implementation was strengthened in several areas:
+
+- COM/OLE initialization and teardown are tracked and balanced, including failures during initialization.
+- Browser event handling now intercepts navigation and new-window requests, and the event connection is released during shutdown.
+- Local-file-only mode is enforced for document navigation; blocked external page requests display a built-in Forbidden page. As with the other backends, subresource requests such as scripts and stylesheets are not filtered.
+- Initialization, host creation, and message/JavaScript bridging paths check failures and clean up their resources more defensively.
+
+See [Build Steps](docs/build.md#mshtml-internet-explorer) for selecting and building the MSHTML backend.
+
 ## Documentation
 
 - [Build Steps](docs/build.md)
