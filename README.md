@@ -45,14 +45,25 @@ The local-only setting applies to document navigation, not to resources referenc
 
 ## Usage
 
-Include `webview.hpp` and link/configure the dependencies for the selected backend (see [Build Steps](docs/build.md)). By default, the Windows CMake configuration uses WebView2.
+Include `webview.hpp` and configure the dependencies for your backend (see
+[Build Steps](docs/build.md)). By default, Windows uses WebView2.
 
 ```cpp
 #include "webview.hpp"
 
+void callback(wv::WebView& webview, wv::String& arg) {
+  if (arg == Str("hello"))
+    webview.eval(Str("alert('Hello from C++!')"));
+}
+
 WEBVIEW_MAIN {
-  wv::WebView webview{800, 600, true, true, Str("Hello world!")};
-  webview.navigate(Str("https://google.com"));
+  wv::WebView webview{800, 600, true, true, Str("Local files only")};
+  webview.setLocalFileOnly(true);
+  webview.setCallback(callback);
+
+  // To load a website instead, disable local-only mode and set a URL:
+  // webview.setLocalFileOnly(false);
+  // webview.navigate(Str("https://google.com"));
 
   if (webview.init() == -1) {
     return 1;
@@ -65,13 +76,24 @@ WEBVIEW_MAIN {
 }
 ```
 
-To enable local-file-only document navigation, set the option before initialization:
+With local-file-only mode enabled, the app loads `index.html` from its current
+working directory and blocks external document navigation. Place this file in
+that directory before running the app:
 
-```cpp
-webview.setLocalFileOnly(true);
+```html
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Local WebView</title></head>
+<body>
+  <button onclick="window.external.invoke('hello')">
+    Call native code
+  </button>
+</body>
+</html>
 ```
 
-The local-only example demonstrates this option. On Windows, string values use `std::wstring`; wrap string literals with `Str("...")`. `WEBVIEW_MAIN` selects the appropriate Win32 or standard C++ entry point.
+On Windows, strings use `std::wstring`; wrap string literals with `Str("...")`.
+`WEBVIEW_MAIN` selects the appropriate Win32 or standard C++ entry point.
 
 The library supports HTTP(S), local `file:///` URLs, and inline `data:` URLs. EdgeHTML does not support local file URLs; see [Limitations](docs/limitations.md).
 
