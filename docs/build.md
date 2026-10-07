@@ -112,7 +112,7 @@ MSHTML is available as a legacy Windows backend for applications that need the s
 
 With CMake, configure with `-DWEBVIEW_USE_MSHTML=ON`. This selects `WEBVIEW_MSHTML` and takes precedence over the default Chromium Edge option. For a manual build, define `WEBVIEW_MSHTML` and link `ole32.lib`, `oleaut32.lib`, and `uuid.lib`.
 
-The backend implements navigation, JavaScript evaluation, CSS injection, window callbacks, title and window sizing. JavaScript callbacks are relayed through the document title, so page title changes are reserved while a callback is being delivered.
+The backend implements navigation, JavaScript evaluation, CSS injection, window callbacks, title and window sizing. JavaScript can call `window.external.invoke(...)` to reach the native callback through the ATL host's external `IDispatch` object.
 
 See the Windows-only [`mshtml` example](../examples/mshtml/) for a local HTML page, a native callback, and local-file-only navigation. Its CMake project selects MSHTML automatically.
 
