@@ -7,8 +7,19 @@
 <body>
   <h1>MSHTML backend</h1>
   <p>This page is loaded from a local file.</p>
-  <button onclick="window.external.invoke('hello')">Call native code</button>
+  <button onclick="invokeNative()">Invoke native callback and eval JavaScript</button>
   <p id="result">Click the button to invoke the native callback.</p>
+  <script>
+    function invokeNative() {
+      var result = document.getElementById('result');
+      try {
+        var dispatched = window.external.invoke('eval');
+        result.innerText = 'Native dispatch returned: ' + dispatched;
+      } catch (error) {
+        result.innerText = 'window.external.invoke failed: ' + error.message;
+      }
+    }
+  </script>
   <p><a href="https://example.com">External page navigation is blocked</a></p>
 </body>
 </html>

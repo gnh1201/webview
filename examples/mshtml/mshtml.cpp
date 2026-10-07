@@ -1,27 +1,46 @@
-// Demonstrates the legacy MSHTML backend with a local page and native callback.
+// Demonstrates window.external.invoke() and eval() with the MSHTML backend.
 #include <filesystem>
 
 #include "webview.hpp"
 
-void callback(wv::WebView& webview, wv::String&) {
-    webview.eval(Str("document.getElementById('result').innerText = '")
-                 Str("Native callback received'"));
+void callback(wv::WebView& webview, wv::String& arg) {
+    if (arg == Str("eval")) {
+        webview.eval(Str(
+            "alert('boo!');"
+            "document.getElementById('result').innerText = 'Native callback completed.';"));
+    }
 }
 
 WEBVIEW_MAIN {
-    const auto cwd = std::filesystem::current_path();
-    wv::WebView webview{800,
-                        600,
-                        true,
-                        true,
-                        Str("MSHTML example"),
-                        Str("file:///") + wv::String(cwd / "index.html")};
+    std::vector<wchar_t> executablePath(32768);
+    const DWORD executablePathLength = GetModuleFileNameW(
+        nullptr, executablePath.data(),
+        static_cast<DWORD>(executablePath.size()));
+    if (executablePathLength == 0 ||
+        executablePathLength >= executablePath.size()) {
+        return 1;
+    }
+    const auto pagePath =
+        std::filesystem::path(std::wstring(executablePath.data(),
+                                           executablePathLength))
+            .parent_path() /
+        L"index.html";
+    std::vector<wchar_t> pageUrl(32768);
+    DWORD pageUrlLength = static_cast<DWORD>(pageUrl.size());
+    if (FAILED(UrlCreateFromPathW(pagePath.c_str(), pageUrl.data(),
+                                  &pageUrlLength, 0))) {
+        return 1;
+    }
+    wv::WebView webview{800, 600, true, true, Str("MSHTML example"),
+                        wv::String(pageUrl.data())};
     webview.setLocalFileOnly(true);
-    webview.setCallback(callback);
 
     if (webview.init() == -1) {
         return 1;
     }
+
+    // Register after initialization, matching the public API usage example.
+    webview.setCallback(callback);
 
     while (webview.run() == 0)
         ;

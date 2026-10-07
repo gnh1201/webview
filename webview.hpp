@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #if defined(WEBVIEW_MSHTML)
 #define WIN32_LEAN_AND_MEAN
@@ -140,6 +141,54 @@ public:
             newWindowRequested(target, cancel);
         else if (beforeNavigate)
             beforeNavigate(target, cancel);
+        return S_OK;
+    }
+};
+
+class MshtmlExternalDispatch
+    : public CComObjectRootEx<CComSingleThreadModel>, public IDispatch {
+public:
+    std::function<bool(const std::wstring&)> invoke;
+
+    BEGIN_COM_MAP(MshtmlExternalDispatch)
+    COM_INTERFACE_ENTRY(IDispatch)
+    END_COM_MAP()
+
+    STDMETHOD(GetTypeInfoCount)(UINT* count) override {
+        if (!count) return E_POINTER;
+        *count = 0;
+        return S_OK;
+    }
+    STDMETHOD(GetTypeInfo)(UINT, LCID, ITypeInfo**) override {
+        return E_NOTIMPL;
+    }
+    STDMETHOD(GetIDsOfNames)(REFIID, LPOLESTR* names, UINT count, LCID,
+                             DISPID* ids) override {
+        if (!names || !ids) return E_POINTER;
+        if (count != 1) return DISP_E_UNKNOWNNAME;
+        if (_wcsicmp(names[0], L"invoke") != 0) return DISP_E_UNKNOWNNAME;
+        ids[0] = 1;
+        return S_OK;
+    }
+    STDMETHOD(Invoke)(DISPID id, REFIID, LCID, WORD, DISPPARAMS* params,
+                      VARIANT* result, EXCEPINFO*, UINT*) override {
+        if (id != 1) return DISP_E_MEMBERNOTFOUND;
+        if (!params || params->cArgs != 1) return DISP_E_BADPARAMCOUNT;
+        CComVariant argument;
+        const HRESULT convertResult =
+            VariantChangeType(&argument, &params->rgvarg[0], 0, VT_BSTR);
+        if (FAILED(convertResult)) return DISP_E_TYPEMISMATCH;
+        bool handled = false;
+        if (invoke) {
+            const std::wstring value(argument.bstrVal,
+                                     SysStringLen(argument.bstrVal));
+            handled = invoke(value);
+        }
+        if (result) {
+            VariantInit(result);
+            result->vt = VT_BOOL;
+            result->boolVal = handled ? VARIANT_TRUE : VARIANT_FALSE;
+        }
         return S_OK;
     }
 };
@@ -310,11 +359,16 @@ public:
         }
 #endif
 #if defined(WEBVIEW_MSHTML)
-        if (hwnd && IsWindow(hwnd)) KillTimer(hwnd, 1);
+        if (hwnd && IsWindow(hwnd)) {
+            KillTimer(hwnd, 1);
+        }
         if (mshtmlConnectionPoint && mshtmlEventCookie)
             mshtmlConnectionPoint->Unadvise(mshtmlEventCookie);
         mshtmlConnectionPoint.Release();
         mshtmlEventSink.Release();
+        if (mshtmlHostWindow) mshtmlHostWindow->SetExternalDispatch(nullptr);
+        mshtmlExternalDispatch.Release();
+        mshtmlHostWindow.Release();
         mshtmlBrowser.Release();
         if (mshtmlHost && IsWindow(mshtmlHost)) DestroyWindow(mshtmlHost);
         if (mshtmlOleInitialized) {
@@ -468,15 +522,17 @@ private:
         std::make_shared<std::atomic_bool>(true);
     std::wstring pendingEval;
 #elif defined(WEBVIEW_MSHTML)
-    String inject = Str(
-        "if(!window.__webviewInjected){window.external={invoke:function(arg){document.title='__webview:'+encodeURIComponent(arg)}};window.__webviewInjected=true;}");
+    String inject;
     HWND mshtmlHost = nullptr;
+    CComPtr<IAxWinHostWindow> mshtmlHostWindow;
     CComPtr<IWebBrowser2> mshtmlBrowser;
+    CComPtr<IDispatch> mshtmlExternalDispatch;
     CComPtr<IConnectionPoint> mshtmlConnectionPoint;
     CComPtr<IDispatch> mshtmlEventSink;
     DWORD mshtmlEventCookie = 0;
     bool mshtmlOleInitialized = false;
     bool mshtmlInitialNavigationPending = false;
+    std::vector<std::wstring> mshtmlPendingCallbacks;
     std::wstring mshtmlPendingNewWindowUrl;
     std::wstring mshtmlNavigationError;
     String pendingEval;
@@ -764,6 +820,23 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
             return DefWindowProc(hwnd, msg, wparam, lparam);
 #endif
 #if defined(WEBVIEW_MSHTML)
+        case WM_APP + 46:
+            if (w != nullptr) {
+                std::vector<std::wstring> callbacks;
+                callbacks.swap(w->mshtmlPendingCallbacks);
+                for (auto& argument : callbacks) {
+                    if (!w->js_callback) continue;
+                    try {
+                        w->js_callback(*w, argument);
+                    } catch (...) {
+                        MessageBox(hwnd,
+                                   L"An exception was thrown by the MSHTML callback.",
+                                   L"MSHTML callback error",
+                                   MB_OK | MB_ICONERROR);
+                    }
+                }
+            }
+            return 0;
         case WM_TIMER:
             if (w != nullptr && w->init_done && w->mshtmlBrowser) {
                 if (w->mshtmlInitialNavigationPending) {
@@ -784,42 +857,29 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                         CComBSTR ready;
                         doc->get_readyState(&ready);
                         if (ready && wcscmp(ready, L"complete") == 0) {
-                            CComBSTR script(w->inject.c_str());
                             CComBSTR language(L"javascript");
-                            win->execScript(script, language, nullptr);
+                            if (!w->inject.empty()) {
+                                CComBSTR script(w->inject.c_str());
+                                CComVariant result;
+                                win->execScript(script, language, &result);
+                            }
                             if (!w->pendingEval.empty()) {
                                 CComBSTR queued(w->pendingEval.c_str());
-                                win->execScript(queued, language, nullptr);
+                                CComVariant result;
+                                const HRESULT evalResult =
+                                    win->execScript(queued, language, &result);
+                                if (FAILED(evalResult)) {
+                                    wchar_t message[256]{};
+                                    swprintf_s(
+                                        message,
+                                        L"MSHTML JavaScript evaluation failed (HRESULT 0x%08lX).",
+                                        static_cast<unsigned long>(evalResult));
+                                    MessageBox(hwnd, message, L"MSHTML error",
+                                               MB_OK | MB_ICONERROR);
+                                }
                                 w->pendingEval.clear();
                             }
                         }
-                    }
-                    CComBSTR title;
-                    if (SUCCEEDED(doc->get_title(&title)) && title &&
-                        wcsncmp(title, L"__webview:", 10) == 0) {
-                        std::wstring encoded(static_cast<BSTR>(title) + 10);
-                        std::string utf8;
-                        for (size_t i = 0; i < encoded.size();) {
-                            if (encoded[i] == L'%' && i + 2 < encoded.size()) {
-                                wchar_t hex[3] = {encoded[i + 1], encoded[i + 2], 0};
-                                utf8.push_back(static_cast<char>(
-                                    wcstol(hex, nullptr, 16)));
-                                i += 3;
-                            } else {
-                                utf8.push_back(static_cast<char>(encoded[i++]));
-                            }
-                        }
-                        int chars = MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
-                                                        static_cast<int>(utf8.size()),
-                                                        nullptr, 0);
-                        std::wstring message(chars > 0 ? chars : 0, L'\0');
-                        if (chars > 0) {
-                            MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
-                                                static_cast<int>(utf8.size()),
-                                                message.data(), chars);
-                        }
-                        if (w->js_callback) w->js_callback(*w, message);
-                        doc->put_title(CComBSTR(L""));
                     }
                 }
             }
@@ -1468,6 +1528,41 @@ int WebView::init() {
         reportInitFailure(L"IWebBrowser2::put_Visible", controlHr);
         return -1;
     }
+    CComPtr<IUnknown> hostUnknown;
+    HRESULT externalHr = ATL::AtlAxGetHost(mshtmlHost, &hostUnknown);
+    if (SUCCEEDED(externalHr) && !hostUnknown) externalHr = E_NOINTERFACE;
+    if (SUCCEEDED(externalHr))
+        externalHr = hostUnknown->QueryInterface(
+            IID_PPV_ARGS(&mshtmlHostWindow));
+    CComObject<MshtmlExternalDispatch>* external = nullptr;
+    if (SUCCEEDED(externalHr))
+        externalHr = CComObject<MshtmlExternalDispatch>::CreateInstance(
+            &external);
+    if (SUCCEEDED(externalHr) && !external) externalHr = E_OUTOFMEMORY;
+    if (SUCCEEDED(externalHr) && external) {
+        external->AddRef();
+        external->invoke = [this](const std::wstring& value) {
+            if (!js_callback) return false;
+            try {
+                mshtmlPendingCallbacks.push_back(value);
+            } catch (...) {
+                return false;
+            }
+            if (PostMessage(hwnd, WM_APP + 46, 0, 0)) return true;
+            mshtmlPendingCallbacks.pop_back();
+            return false;
+        };
+        externalHr = external->QueryInterface(
+            IID_PPV_ARGS(&mshtmlExternalDispatch));
+        external->Release();
+    }
+    if (SUCCEEDED(externalHr))
+        externalHr = mshtmlHostWindow->SetExternalDispatch(
+            mshtmlExternalDispatch);
+    if (FAILED(externalHr)) {
+        reportInitFailure(L"SetExternalDispatch", externalHr);
+        return -1;
+    }
     CComPtr<IConnectionPointContainer> connectionContainer;
     CComObject<MshtmlNavigationSink>* sink = nullptr;
     HRESULT eventHr = mshtmlBrowser->QueryInterface(
@@ -1521,8 +1616,9 @@ int WebView::init() {
         mshtmlConnectionPoint.Release();
         return -1;
     }
-    const HRESULT silentResult =
-        mshtmlBrowser->put_Silent(debug ? VARIANT_FALSE : VARIANT_TRUE);
+    // JavaScript dialogs such as alert() are part of eval() behavior in every
+    // build configuration, not a debug-only feature.
+    const HRESULT silentResult = mshtmlBrowser->put_Silent(VARIANT_FALSE);
     if (FAILED(silentResult)) {
         reportInitFailure(L"IWebBrowser2::put_Silent", silentResult);
         return -1;
@@ -1599,7 +1695,14 @@ void WebView::eval(const std::wstring& js) {
         SUCCEEDED(disp->QueryInterface(IID_PPV_ARGS(&doc))) && doc &&
         SUCCEEDED(doc->get_parentWindow(&win)) && win) {
         CComBSTR script(js.c_str()), language(L"javascript");
-        win->execScript(script, language, nullptr);
+        CComVariant result;
+        const HRESULT evalResult = win->execScript(script, language, &result);
+        if (FAILED(evalResult)) {
+            wchar_t message[256]{};
+            swprintf_s(message, L"MSHTML JavaScript evaluation failed (HRESULT 0x%08lX).",
+                       static_cast<unsigned long>(evalResult));
+            MessageBox(hwnd, message, L"MSHTML error", MB_OK | MB_ICONERROR);
+        }
     } else {
         pendingEval += js + L"\n";
     }
