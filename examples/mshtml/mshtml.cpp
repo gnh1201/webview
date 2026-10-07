@@ -1,6 +1,4 @@
 // Demonstrates window.external.invoke() and eval() with the MSHTML backend.
-#include <filesystem>
-
 #include "webview.hpp"
 
 void callback(wv::WebView& webview, wv::String& arg) {
@@ -12,27 +10,7 @@ void callback(wv::WebView& webview, wv::String& arg) {
 }
 
 WEBVIEW_MAIN {
-    std::vector<wchar_t> executablePath(32768);
-    const DWORD executablePathLength = GetModuleFileNameW(
-        nullptr, executablePath.data(),
-        static_cast<DWORD>(executablePath.size()));
-    if (executablePathLength == 0 ||
-        executablePathLength >= executablePath.size()) {
-        return 1;
-    }
-    const auto pagePath =
-        std::filesystem::path(std::wstring(executablePath.data(),
-                                           executablePathLength))
-            .parent_path() /
-        L"index.html";
-    std::vector<wchar_t> pageUrl(32768);
-    DWORD pageUrlLength = static_cast<DWORD>(pageUrl.size());
-    if (FAILED(UrlCreateFromPathW(pagePath.c_str(), pageUrl.data(),
-                                  &pageUrlLength, 0))) {
-        return 1;
-    }
-    wv::WebView webview{800, 600, true, true, Str("MSHTML example"),
-                        wv::String(pageUrl.data())};
+    wv::WebView webview{800, 600, true, true, Str("MSHTML example")};
     webview.setLocalFileOnly(true);
 
     if (webview.init() == -1) {
