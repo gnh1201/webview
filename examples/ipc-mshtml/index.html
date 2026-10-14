@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP stdio IPC (MSHTML)</title>
+  </head>
+  <body>
+    <button id="run">Run evaluate_js</button>
+    <pre id="result">Click the button to call the MCP tool.</pre>
+    <script>
+      document.getElementById('run').onclick = function () {
+        var output = document.getElementById('result');
+        output.innerText = 'Waiting for MCP...';
+        try {
+          if (!window.mcp || !window.mcp.tools || !window.mcp.tools.call) {
+            throw new Error('MCP bridge is not ready');
+          }
+          window.mcp.tools.call('evaluate_js', {
+            script: 'return 1 + 2;',
+            allowUnsafeEval: true
+          }, function (error, result) {
+            if (error) {
+              output.innerText = 'MCP error: ' + error.message;
+            } else {
+              output.innerText = result.content && result.content.length
+                ? result.content[0].text
+                : 'MCP returned an empty result';
+            }
+          });
+        } catch (error) {
+          output.innerText = 'MCP error: ' + error.message;
+        }
+      };
+    </script>
+  </body>
+</html>

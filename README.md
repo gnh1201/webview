@@ -37,7 +37,8 @@ Examples are in [`examples/`](examples/):
 - `basic` opens `https://google.com`.
 - `local-only` loads `index.html` from the current directory and displays Not Found if it is missing. External page navigation is blocked with a Forbidden page.
 - `mshtml` demonstrates the legacy MSHTML backend, local content, and a JavaScript-to-native callback.
-- `ipc` demonstrates `window.mcp.tools.call('evaluate_js', {script: ..., allowUnsafeEval: true})` over stdio JSON-RPC.
+- `ipc` demonstrates callback-based `window.mcp.tools.call('evaluate_js', params, callback)` over stdio JSON-RPC; the same example works with Promise-based engines.
+- `ipc-mshtml` and `ipc-edgehtml` run MCP IPC on the legacy Windows engines; MSHTML uses a callback because it has no native Promise support.
 
 The local-only setting applies to document navigation, not to resources referenced by the page. Do not treat it as a network sandbox for untrusted HTML.
 

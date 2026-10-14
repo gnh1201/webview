@@ -103,8 +103,7 @@ public:
     }
 
     std::string callTool(const std::string& name,
-                         const std::string& argumentsJson) {
-        const auto arguments = nlohmann::json::parse(argumentsJson);
+                         const nlohmann::json& arguments) {
         if (!arguments.is_object())
             throw std::runtime_error("MCP tool arguments must be a JSON object");
         return request("tools/call", {{"name", name}, {"arguments", arguments}});

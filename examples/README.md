@@ -31,6 +31,19 @@ cmake -S examples/ipc -B out/build/ipc
 cmake --build out/build/ipc --config Debug
 ```
 
+Windows-only `ipc-mshtml` and `ipc-edgehtml` variants use the same process
+connection and tool call with the respective legacy rendering engines. MSHTML
+uses a callback because it has no native Promise support. The EdgeHTML variant
+embeds its page as a `data:` URL because EdgeHTML cannot navigate to local HTML
+files.
+
+```powershell
+cmake -S examples/ipc-mshtml -B out/build/ipc-mshtml
+cmake --build out/build/ipc-mshtml --config Debug
+cmake -S examples/ipc-edgehtml -B out/build/ipc-edgehtml
+cmake --build out/build/ipc-edgehtml --config Debug
+```
+
 ```sh
 mkdir build
 cd build

@@ -13,16 +13,17 @@
         var output = document.getElementById('result');
         output.textContent = 'Waiting for MCP...';
         window.mcp.tools.call('evaluate_js', {
-          script: '1 + 2',
+          script: 'return 1 + 2;',
           allowUnsafeEval: true
-        })
-          .then(function (result) {
-            output.textContent = result.content && result.content.length
-              ? result.content[0].text
-              : JSON.stringify(result);
-          }, function (error) {
+        }, function (error, result) {
+          if (error) {
             output.textContent = 'MCP error: ' + error.message;
-          });
+            return;
+          }
+          output.textContent = result.content && result.content.length
+            ? result.content[0].text
+            : JSON.stringify(result);
+        });
       };
     </script>
   </body>

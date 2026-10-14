@@ -345,8 +345,32 @@ public:
           title(title_),
           url(url_) {
         inject += Str(
+            "if(!window.__wvMcpInstalled){window.__wvMcpInstalled=true;"
             "window.mcp=window.mcp||{};window.mcp.tools=window.mcp.tools||{};"
-            "window.__wvMcpPending={};window.__wvMcpNext=0;"
+            "window.__wvMcpPending={};window.__wvMcpNext=0;");
+#if defined(WEBVIEW_MSHTML)
+        inject += Str(
+            "if(!window.JSON){window.JSON={};"
+            "window.JSON.stringify=function(v){function q(s){return '\"'+String(s).replace(/[\\\"\\\\\\x00-\\x1f]/g,function(c){"
+            "var m={'\\\"':'\\\\\\\"','\\\\':'\\\\\\\\','\\b':'\\\\b','\\f':'\\\\f','\\n':'\\\\n','\\r':'\\\\r','\\t':'\\\\t'};"
+            "var n=c.charCodeAt(0);return m[c]||'\\\\u'+('0000'+n.toString(16)).slice(-4);})+'\"';}"
+            "function e(x){if(x===null)return 'null';var t=typeof x;if(t==='string')return q(x);"
+            "if(t==='number'||t==='boolean')return isFinite(x)?String(x):'null';if(t!=='object')return undefined;"
+            "var a=[],i,k,z;if(Object.prototype.toString.call(x)==='[object Array]'){for(i=0;i<x.length;i++){z=e(x[i]);a.push(z===undefined?'null':z);}return '['+a.join(',')+']';}"
+            "for(k in x)if(Object.prototype.hasOwnProperty.call(x,k)){z=e(x[k]);if(z!==undefined)a.push(q(k)+':'+z);}return '{'+a.join(',')+'}';}"
+            "return e(v);};window.JSON.parse=function(s){return eval('('+s+')');};}"
+            "window.__wvMcpResolve=function(i,v,e){var cb=window.__wvMcpPending[i];"
+            "if(!cb)return;delete window.__wvMcpPending[i];if(e){cb(new Error(v),null);return;}"
+            "var r=v;if(r&&r.isError){var m=r.content&&r.content.length?"
+            "r.content[0].text:'MCP tool call failed';cb(new Error(m),r);}else cb(null,r);};"
+            "window.mcp.tools.call=function(n,p,cb){if(typeof cb!=='function')"
+            "throw new Error('MSHTML requires a callback: call(name, params, callback)');"
+            "var i=++window.__wvMcpNext;window.__wvMcpPending[i]=cb;"
+            "if(window.external.invoke('__wv_mcp_call__'+i+'|'+encodeURIComponent(n)+'|'+"
+            "encodeURIComponent(JSON.stringify(p==null?{}:p)))===false){"
+            "delete window.__wvMcpPending[i];cb(new Error('Native IPC bridge rejected the request'),null);}};}");
+#else
+        inject += Str(
             "if(!window.Promise){window.Promise=function(f){var s=0,v,h=[];"
             "function run(){while(h.length){var x=h.shift(),g=s===1?x[0]:x[1];"
             "if(g){try{x[2](g(v));}catch(e){x[3](e);}}else(s===1?x[2]:x[3])(v);}}"
@@ -356,12 +380,16 @@ public:
             "function(x){done(2,x);});}catch(e){done(2,e);}};}"
             "window.__wvMcpResolve=function(i,v,e){var d=window.__wvMcpPending[i];"
             "if(!d)return;delete window.__wvMcpPending[i];if(e){d.reject(new Error(v));return;}"
-            "var r=JSON.parse(v);if(r&&r.isError){var m=r.content&&r.content.length?"
+            "var r=v;if(r&&r.isError){var m=r.content&&r.content.length?"
             "r.content[0].text:'MCP tool call failed';d.reject(new Error(m));}else d.resolve(r);};"
-            "window.mcp.tools.call=function(n,p){return new window.Promise(function(resolve,reject){"
+            "window.mcp.tools.call=function(n,p,cb){var promise=new window.Promise(function(resolve,reject){"
             "var i=++window.__wvMcpNext;window.__wvMcpPending[i]={resolve:resolve,reject:reject};"
-            "window.external.invoke('__wv_mcp_call__'+i+'|'+encodeURIComponent(n)+'|'+"
-            "encodeURIComponent(JSON.stringify(p==null?{}:p)));});};");
+            "if(window.external.invoke('__wv_mcp_call__'+i+'|'+encodeURIComponent(n)+'|'+"
+            "encodeURIComponent(JSON.stringify(p==null?{}:p)))===false){"
+            "delete window.__wvMcpPending[i];reject(new Error('Native IPC bridge rejected the request'));}});"
+            "if(typeof cb==='function')promise.then(function(r){cb(null,r);},function(e){cb(e,null);});"
+            "return promise;};}");
+#endif
     }
     ~WebView() {
         init_done = false;
@@ -2264,10 +2292,11 @@ bool WebView::handleMcpMessage(const wv::String& message) {
             return result;
         };
         const auto name = percentDecode(narrowAscii(body.substr(first + 1, second - first - 1)));
-        const auto args = percentDecode(narrowAscii(body.substr(second + 1)));
-        const auto result = mcpClient.callTool(name, args);
+        const auto args = nlohmann::json::parse(
+            percentDecode(narrowAscii(body.substr(second + 1))));
+        const auto result = nlohmann::json::parse(mcpClient.callTool(name, args));
         eval(Str("window.__wvMcpResolve(") + fromUtf8(id) + Str(",") +
-             fromUtf8(nlohmann::json(result).dump()) + Str(",false);"));
+             fromUtf8(result.dump(-1, ' ', true)) + Str(",false);"));
     } catch (const std::exception& error) {
         if (id.empty()) id = "0";
         eval(Str("window.__wvMcpResolve(") + fromUtf8(id) + Str(",") +

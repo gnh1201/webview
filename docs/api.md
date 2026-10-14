@@ -59,10 +59,9 @@ arguments use UTF-8. JSON-RPC messages are parsed and serialized with
 `nlohmann/json` 3.12.0 or later. CMake uses an installed package when available
 and otherwise fetches the pinned release during configuration.
 
-Pages loaded in the WebView get `window.mcp.tools.call(name, params)`. It sends
-MCP `tools/call` and returns a Promise (or Promise-compatible object on older
-engines) resolving to the server's result object, including `content`. For
-example:
+Pages loaded in the WebView get `window.mcp.tools.call(name, params[, callback])`.
+It sends MCP `tools/call`. WebView2 and EdgeHTML return a Promise resolving to
+the server's result object, including `content`:
 
 ```js
 window.mcp.tools.call('evaluate_js', {
@@ -71,6 +70,11 @@ window.mcp.tools.call('evaluate_js', {
 })
   .then(function (result) { console.log(result.content[0].text); });
 ```
+
+MSHTML has no native Promise support, so it uses the optional Node-style
+callback: `window.mcp.tools.call(name, params, function (error, result) { ... })`.
+Promise-capable backends accept the same callback and still return the Promise.
+On success `error` is null; on failure `result` is null.
 
 The [IPC example](../examples/ipc/) shows a button invoking `evaluate_js` and
 displaying the returned value. Set the process paths in `examples/ipc/ipc.cpp`.
