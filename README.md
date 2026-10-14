@@ -1,5 +1,7 @@
 # webview
 
+[![Discord chat](https://img.shields.io/discord/359930650330923008?logo=discord&utm_source=welsonjs)](https://discord.gg/XKG5CjtXEj?utm_source=welsonjs)
+
 A tiny C++ webview library focused on Windows. It provides backends for Microsoft Edge WebView2 (Chromium), EdgeHTML (legacy Edge), and MSHTML (Trident).
 
 This repository is [forked from MichaelKim/webview](https://github.com/MichaelKim/webview) and builds on ideas from [zerge's webview](https://github.com/webview/webview). Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
