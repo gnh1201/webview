@@ -31,6 +31,8 @@
 #include <string>
 #include <vector>
 
+#include "ipc.hpp"
+
 #if defined(WEBVIEW_MSHTML)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -220,12 +222,14 @@ public:
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "user32.lib")
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <unknwn.h>
 #include <WebView2.h>
 #include <shellscalingapi.h>
 #include <shlwapi.h>
 #include <tchar.h>
 #include <wil/com.h>
-#include <windows.h>
 #include <wrl.h>
 
 #include <cstdlib>
@@ -339,7 +343,26 @@ public:
           resizable(resizable_),
           debug(debug_),
           title(title_),
-          url(url_) {}
+          url(url_) {
+        inject += Str(
+            "window.mcp=window.mcp||{};window.mcp.tools=window.mcp.tools||{};"
+            "window.__wvMcpPending={};window.__wvMcpNext=0;"
+            "if(!window.Promise){window.Promise=function(f){var s=0,v,h=[];"
+            "function run(){while(h.length){var x=h.shift(),g=s===1?x[0]:x[1];"
+            "if(g){try{x[2](g(v));}catch(e){x[3](e);}}else(s===1?x[2]:x[3])(v);}}"
+            "this.then=function(a,b){return new window.Promise(function(r,j){"
+            "h.push([a,b,r,j]);if(s)run();});};this['catch']=function(b){return this.then(null,b);};"
+            "function done(n,x){if(s)return;s=n;v=x;run();}try{f(function(x){done(1,x);},"
+            "function(x){done(2,x);});}catch(e){done(2,e);}};}"
+            "window.__wvMcpResolve=function(i,v,e){var d=window.__wvMcpPending[i];"
+            "if(!d)return;delete window.__wvMcpPending[i];if(e){d.reject(new Error(v));return;}"
+            "var r=JSON.parse(v);if(r&&r.isError){var m=r.content&&r.content.length?"
+            "r.content[0].text:'MCP tool call failed';d.reject(new Error(m));}else d.resolve(r);};"
+            "window.mcp.tools.call=function(n,p){return new window.Promise(function(resolve,reject){"
+            "var i=++window.__wvMcpNext;window.__wvMcpPending[i]={resolve:resolve,reject:reject};"
+            "window.external.invoke('__wv_mcp_call__'+i+'|'+encodeURIComponent(n)+'|'+"
+            "encodeURIComponent(JSON.stringify(p==null?{}:p)));});};");
+    }
     ~WebView() {
         init_done = false;
 #if defined(WEBVIEW_EDGE)
@@ -392,11 +415,25 @@ public:
     void navigate(String u);         // Navigate to URL
     void preEval(const String& js);  // Eval JS before page loads
     void eval(const String& js);     // Eval JS
+    void connectProcess(const std::string& executable,
+                        const std::vector<std::string>& arguments = {}) {
+        mcpClient.connect(executable, arguments);
+    }
+    void disconnectProcess() { mcpClient.disconnect(); }
+    bool isProcessConnected() const { return mcpClient.connected(); }
+    std::string sendIpc(const std::string& method,
+                        const std::string& paramsJson) {
+        return mcpClient.send(method, paramsJson);
+    }
     void css(const String& css);     // Inject CSS
     void exit();                     // Stop loop
 
 private:
     void showForbiddenPage();
+    bool handleMcpMessage(const String& message);
+    static String fromUtf8(const std::string& value);
+    static std::string percentDecode(const std::string& value);
+    detail::StdioMcpClient mcpClient;
 
     // Properties for init
     int width;
@@ -825,9 +862,9 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 std::vector<std::wstring> callbacks;
                 callbacks.swap(w->mshtmlPendingCallbacks);
                 for (auto& argument : callbacks) {
-                    if (!w->js_callback) continue;
                     try {
-                        w->js_callback(*w, argument);
+                        if (!w->handleMcpMessage(argument) && w->js_callback)
+                            w->js_callback(*w, argument);
                     } catch (...) {
                         MessageBox(hwnd,
                                    L"An exception was thrown by the MSHTML callback.",
@@ -987,8 +1024,8 @@ int WebView::init() {
         reinterpret_cast<int64_t>(hwnd), Rect()));
     webview.Settings().IsScriptNotifyAllowed(true);
     webview.ScriptNotify([this](const auto&, const auto& args) {
-        if (js_callback) {
-            std::wstring ws{args.Value()};
+        std::wstring ws{args.Value()};
+        if (!handleMcpMessage(ws) && js_callback) {
             js_callback(*this, ws);
         }
     });
@@ -1121,17 +1158,13 @@ int WebView::init() {
         [this, lifetime](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
             const auto alive = lifetime.lock();
             if (!alive || !alive->load()) return S_OK;
-            if (js_callback) {
-                // Consider args->get_WebMessageAsJson?
-                LPWSTR messageRaw;
-                auto getMessageResult =
-                    args->TryGetWebMessageAsString(&messageRaw);
-                if (FAILED(getMessageResult)) {
-                    return getMessageResult;
-                }
-
-                std::wstring message(messageRaw);
-                CoTaskMemFree(messageRaw);
+            // Consider args->get_WebMessageAsJson?
+            LPWSTR messageRaw;
+            auto getMessageResult = args->TryGetWebMessageAsString(&messageRaw);
+            if (FAILED(getMessageResult)) return getMessageResult;
+            std::wstring message(messageRaw);
+            CoTaskMemFree(messageRaw);
+            if (!handleMcpMessage(message) && js_callback) {
                 js_callback(*this, message);
             }
             return S_OK;
@@ -1542,7 +1575,8 @@ int WebView::init() {
     if (SUCCEEDED(externalHr) && external) {
         external->AddRef();
         external->invoke = [this](const std::wstring& value) {
-            if (!js_callback) return false;
+            const bool isMcpCall = value.compare(0, 15, L"__wv_mcp_call__") == 0;
+            if (!js_callback && !isMcpCall) return false;
             try {
                 mshtmlPendingCallbacks.push_back(value);
             } catch (...) {
@@ -1808,13 +1842,10 @@ int WebView::init() {
         @selector(userContentController:didReceiveScriptMessage:),
         imp_implementationWithBlock(
             [=](id, SEL, WKScriptMessage* scriptMessage) {
-                if (this->js_callback) {
-                    id body = [scriptMessage body];
-                    if (![body isKindOfClass:[NSString class]]) {
-                        return;
-                    }
-
-                    std::string msg = [body UTF8String];
+                id body = [scriptMessage body];
+                if (![body isKindOfClass:[NSString class]]) return;
+                std::string msg = [body UTF8String];
+                if (!this->handleMcpMessage(msg) && this->js_callback) {
                     this->js_callback(*this, msg);
                 }
             }),
@@ -2110,9 +2141,9 @@ void WebView::external_message_received_cb(WebKitUserContentManager*,
                                            WebKitJavascriptResult* r,
                                            gpointer arg) {
     WebView* w = static_cast<WebView*>(arg);
-    if (w->js_callback) {
-        JSCValue* value = webkit_javascript_result_get_js_value(r);
-        std::string str = std::string(jsc_value_to_string(value));
+    JSCValue* value = webkit_javascript_result_get_js_value(r);
+    std::string str = std::string(jsc_value_to_string(value));
+    if (!w->handleMcpMessage(str) && w->js_callback) {
         w->js_callback(*w, str);
     }
 }
@@ -2169,6 +2200,81 @@ void WebView::css(const wv::String& css) {
 }
 
 void WebView::setCallback(jscb callback) { js_callback = callback; }
+
+wv::String WebView::fromUtf8(const std::string& value) {
+#if defined(WEBVIEW_IS_WIN)
+    if (value.empty()) return {};
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                        value.data(), static_cast<int>(value.size()),
+                                        nullptr, 0);
+    if (size <= 0) throw std::runtime_error("invalid UTF-8 MCP response");
+    std::wstring converted(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+                        static_cast<int>(value.size()), converted.data(), size);
+    return converted;
+#else
+    return value;
+#endif
+}
+
+std::string WebView::percentDecode(const std::string& value) {
+    auto hexValue = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string decoded;
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] != '%') { decoded += value[i]; continue; }
+        if (i + 2 >= value.size()) throw std::runtime_error("invalid encoded MCP message");
+        const int hi = hexValue(value[i + 1]);
+        const int lo = hexValue(value[i + 2]);
+        if (hi < 0 || lo < 0) throw std::runtime_error("invalid encoded MCP message");
+        decoded += static_cast<char>((hi << 4) | lo);
+        i += 2;
+    }
+    return decoded;
+}
+
+bool WebView::handleMcpMessage(const wv::String& message) {
+    const wv::String prefix = Str("__wv_mcp_call__");
+    if (message.compare(0, prefix.size(), prefix) != 0) return false;
+    const auto body = message.substr(prefix.size());
+    const auto first = body.find(Str("|"));
+    const auto second = first == wv::String::npos
+                            ? wv::String::npos
+                            : body.find(Str("|"), first + 1);
+    std::string id;
+    try {
+        if (first == wv::String::npos || second == wv::String::npos)
+            throw std::runtime_error("malformed MCP tool call");
+        for (auto c : body.substr(0, first)) {
+            if (c < Str('0') || c > Str('9')) throw std::runtime_error("invalid MCP request id");
+            id += static_cast<char>(c);
+        }
+        if (id.empty()) throw std::runtime_error("invalid MCP request id");
+        auto narrowAscii = [](const wv::String& text) {
+            std::string result;
+            result.reserve(text.size());
+            for (auto c : text) {
+                if (c > 0x7f) throw std::runtime_error("invalid encoded MCP message");
+                result += static_cast<char>(c);
+            }
+            return result;
+        };
+        const auto name = percentDecode(narrowAscii(body.substr(first + 1, second - first - 1)));
+        const auto args = percentDecode(narrowAscii(body.substr(second + 1)));
+        const auto result = mcpClient.callTool(name, args);
+        eval(Str("window.__wvMcpResolve(") + fromUtf8(id) + Str(",") +
+             fromUtf8(nlohmann::json(result).dump()) + Str(",false);"));
+    } catch (const std::exception& error) {
+        if (id.empty()) id = "0";
+        eval(Str("window.__wvMcpResolve(") + fromUtf8(id) + Str(",") +
+             fromUtf8(nlohmann::json(error.what()).dump()) + Str(",true);"));
+    }
+    return true;
+}
 
 void WebView::preEval(const wv::String& js) {
     inject += Str("(()=>{") + js + Str("})()");  // TODO: is the IIFE necessary?

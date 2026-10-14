@@ -20,6 +20,17 @@ The example's CMake project enables `WEBVIEW_USE_MSHTML` automatically; it does
 not use the default WebView2 backend. With a Visual Studio generator, add
 `-A x64` to the configure command to select a 64-bit build.
 
+`ipc` connects the WebView to a WelsonJS MCP process over stdio. Its button calls
+`window.mcp.tools.call('evaluate_js', {script: '1 + 2', allowUnsafeEval: true})`
+and displays the returned MCP result. It looks for `app.js` beside the example executable and
+opens a file picker if the file is missing. Adjust the `cscript.exe` path in
+`ipc.cpp` for your WelsonJS installation, then build it with:
+
+```powershell
+cmake -S examples/ipc -B out/build/ipc
+cmake --build out/build/ipc --config Debug
+```
+
 ```sh
 mkdir build
 cd build

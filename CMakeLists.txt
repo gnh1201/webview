@@ -5,6 +5,9 @@ project(webview
   DESCRIPTION
     "A tiny cross-platform webview library written in C++."
   HOMEPAGE_URL "https://github.com/MichaelKim/webview")
+if(POLICY CMP0135)
+	cmake_policy(SET CMP0135 NEW)
+endif()
 include(cmake/Settings.cmake)
 
 # CMake's MSVC defaults add /W3 globally. The project sets /W4 on its targets,
@@ -33,6 +36,18 @@ include(cmake/StaticAnalyzers.cmake)
 include(cmake/NuGet.cmake)
 
 add_library(${PROJECT_NAME} INTERFACE)
+
+# The public WebView header includes the MCP stdio client, which uses nlohmann/json.
+find_package(nlohmann_json 3.12.0 QUIET)
+if(NOT TARGET nlohmann_json::nlohmann_json)
+	include(FetchContent)
+	set(JSON_BuildTests OFF CACHE INTERNAL "")
+	FetchContent_Declare(nlohmann_json
+		URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+	)
+	FetchContent_MakeAvailable(nlohmann_json)
+endif()
+target_link_libraries(${PROJECT_NAME} INTERFACE nlohmann_json::nlohmann_json)
 
 if(APPLE)
 	set(WEBVIEW_COMPILE_DEFS WEBVIEW_MAC)

@@ -30,18 +30,20 @@ See [MSHTML build instructions](docs/build.md#mshtml-trident) and the [`mshtml` 
 
 See [Build Steps](docs/build.md) for backend requirements and configuration. For a Visual Studio x64 WebView2 build, configure with `-A x64`; use `-A Win32` for 32-bit. The CMake configuration selects the WebView2 loader for the chosen architecture.
 
+The MCP stdio API uses [nlohmann/json](https://github.com/nlohmann/json) for JSON-RPC parsing and serialization. CMake uses an installed 3.12.0+ package or fetches that release during configuration.
+
 Examples are in [`examples/`](examples/):
 
 - `basic` opens `https://google.com`.
 - `local-only` loads `index.html` from the current directory and displays Not Found if it is missing. External page navigation is blocked with a Forbidden page.
 - `mshtml` demonstrates the legacy MSHTML backend, local content, and a JavaScript-to-native callback.
+- `ipc` demonstrates `window.mcp.tools.call('evaluate_js', {script: ..., allowUnsafeEval: true})` over stdio JSON-RPC.
 
 The local-only setting applies to document navigation, not to resources referenced by the page. Do not treat it as a network sandbox for untrusted HTML.
 
 ## TODO
 
 - Add compatibility for the HTA (`.hta`) file format. HTA (HTML Application) files are HTML-based Windows applications, traditionally hosted by `mshta.exe`, and can include an `<HTA:APPLICATION>` element to configure application-window behavior such as its border. Compatibility should account for these application-specific semantics, rather than only opening the file as an ordinary HTML page. HTA content has different security assumptions from normal browser content, so this work must also define and document its security behavior. See Microsoft's documentation for the [`HTA:APPLICATION` element](https://learn.microsoft.com/en-us/previous-versions/ms536476%28v%3Dvs.85%29) and [HTA security model](https://learn.microsoft.com/en-us/openspecs/ie_standards/ms-html401e/1cc72255-6605-4e5a-b401-37da1c365a56).
-- Add support for the inter-process communication (IPC) planned for the WelsonJS project.
 
 ## Usage
 
