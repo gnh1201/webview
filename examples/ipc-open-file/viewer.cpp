@@ -169,7 +169,7 @@ WEBVIEW_MAIN {
             std::transform(extension.begin(), extension.end(), extension.begin(),
                            [](wchar_t ch) {
                                return static_cast<wchar_t>(towlower(ch));
-                           });
+            });
             if (extension == L".hta") {
                 snapshot = std::make_unique<HtmlSnapshot>(file);
                 return snapshot->path();

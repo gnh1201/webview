@@ -94,7 +94,10 @@ With a multi-configuration Visual Studio generator, run
 `out/build/ipc-open-file/bin/Debug/ipc_open_file.exe`. Its button calls
 `evaluate_js` with `allowUnsafeEval: true`; adjust the `cscript.exe` selection in
 the viewer if the WelsonJS installation requires a different Windows Script
-Host architecture. The MSHTML backend requires ATL.
+Host architecture. Relative filesystem paths in HTA documents resolve from
+the document directory. The MSHTML host allows ActiveX execution and scripting,
+including `ADODB.Stream`. This policy applies to all documents rendered by the
+MSHTML backend. The MSHTML backend requires ATL.
 
 ```sh
 mkdir build

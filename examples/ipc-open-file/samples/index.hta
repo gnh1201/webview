@@ -18,6 +18,8 @@
     <h1>MCP stdio IPC with HTA</h1>
     <p>The dispatcher routes HTA documents to MSHTML.</p>
     <button id="run">Run evaluate_js</button>
+    <button id="check-file">Check relative FileExists</button>
+    <button id="check-adodb">Test ADODB.Stream creation</button>
     <pre id="result">Click the button to ask app.js to evaluate 1 + 2.</pre>
     <script>
       document.getElementById('run').onclick = function () {
@@ -35,6 +37,37 @@
             ? result.content[0].text
             : 'Empty MCP result';
         });
+      };
+      document.getElementById('check-file').onclick = function () {
+        var output = document.getElementById('result');
+        try {
+          var fso = new ActiveXObject('Scripting.FileSystemObject');
+          output.innerText = 'FileExists("index.hta"): ' +
+            fso.FileExists('index.hta');
+        } catch (error) {
+          output.innerText = 'FileSystemObject error: ' + error.message;
+        }
+      };
+      document.getElementById('check-adodb').onclick = function () {
+        var output = document.getElementById('result');
+        try {
+          var stream = new ActiveXObject('ADODB.Stream');
+          output.innerText = 'ADODB.Stream creation succeeded.';
+          stream = null;
+        } catch (error) {
+          var number = typeof error.number === 'undefined'
+            ? 'unknown'
+            : '0x' + (error.number >>> 0).toString(16);
+          output.innerText = 'ADODB.Stream creation failed (' + number + '): ' +
+            (error.description || error.message || String(error));
+          try {
+            output.innerText += '\nSecurity diagnostics: ' +
+              window.external.securityDiagnostics();
+          } catch (diagnosticError) {
+            output.innerText += '\nSecurity diagnostics unavailable: ' +
+              diagnosticError.message;
+          }
+        }
       };
     </script>
   </body>

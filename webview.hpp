@@ -40,7 +40,9 @@
 #include <exdisp.h>
 #include <exdispid.h>
 #include <mshtml.h>
+#include <objsafe.h>
 #include <shellscalingapi.h>
+#include <urlmon.h>
 #include <atlbase.h>
 #include <atlcom.h>
 #include <atlhost.h>
@@ -148,13 +150,183 @@ public:
 };
 
 class MshtmlExternalDispatch
-    : public CComObjectRootEx<CComSingleThreadModel>, public IDispatch {
+    : public CComObjectRootEx<CComSingleThreadModel>,
+      public IDispatch,
+      public IObjectSafety,
+      public IServiceProvider,
+      public IInternetHostSecurityManager,
+      public IInternetSecurityManager {
 public:
     std::function<bool(const std::wstring&)> invoke;
+    bool allowActiveX = false;
+    DWORD hostSecurityQueries = 0;
+    DWORD securityQueries = 0;
+    DWORD hostUrlActions = 0;
+    DWORD urlActions = 0;
+    DWORD activeXActionsAllowed = 0;
+    DWORD customPolicies = 0;
+    HRESULT localMachineLockdownResult = E_PENDING;
+
+    static bool isActiveXUrlAction(DWORD action) {
+        return (action >= URLACTION_ACTIVEX_MIN &&
+                action <= URLACTION_ACTIVEX_MAX) ||
+               action == URLACTION_SCRIPT_SAFE_ACTIVEX ||
+               action == URLACTION_SCRIPT_OVERRIDE_SAFETY;
+    }
+
+    bool allowActiveXUrlAction(DWORD action, BYTE* policy,
+                               DWORD policySize) {
+        if (!allowActiveX || !policy || policySize < sizeof(DWORD) ||
+            !isActiveXUrlAction(action))
+            return false;
+        *reinterpret_cast<DWORD*>(policy) = URLPOLICY_ALLOW;
+        ++activeXActionsAllowed;
+        return true;
+    }
 
     BEGIN_COM_MAP(MshtmlExternalDispatch)
     COM_INTERFACE_ENTRY(IDispatch)
+    COM_INTERFACE_ENTRY(IObjectSafety)
+    COM_INTERFACE_ENTRY(IServiceProvider)
+    COM_INTERFACE_ENTRY(IInternetHostSecurityManager)
+    COM_INTERFACE_ENTRY(IInternetSecurityManager)
     END_COM_MAP()
+
+    STDMETHOD(QueryService)(REFGUID serviceId, REFIID interfaceId,
+                            void** object) override {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        const bool hostSecurityService =
+            serviceId == SID_SInternetHostSecurityManager &&
+            interfaceId == IID_IInternetHostSecurityManager;
+        const bool securityService = serviceId == SID_SInternetSecurityManager &&
+                                     interfaceId == IID_IInternetSecurityManager;
+        if (hostSecurityService) ++hostSecurityQueries;
+        if (securityService) ++securityQueries;
+        if (!hostSecurityService && !securityService)
+            return E_NOINTERFACE;
+        return QueryInterface(interfaceId, object);
+    }
+    STDMETHOD(GetSecurityId)(BYTE*, DWORD*, DWORD_PTR) override {
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(ProcessUrlAction)(DWORD action, BYTE* policy, DWORD policySize,
+                                BYTE*, DWORD, DWORD, DWORD) override {
+        ++hostUrlActions;
+        if (allowActiveXUrlAction(action, policy, policySize)) return S_OK;
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(SetSecuritySite)(IInternetSecurityMgrSite*) override {
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(GetSecuritySite)(IInternetSecurityMgrSite** site) override {
+        if (!site) return E_POINTER;
+        *site = nullptr;
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(MapUrlToZone)(LPCWSTR, DWORD* zone, DWORD) override {
+        if (!zone) return E_POINTER;
+        *zone = URLZONE_LOCAL_MACHINE;
+        return S_OK;
+    }
+    STDMETHOD(GetSecurityId)(LPCWSTR, BYTE*, DWORD*, DWORD_PTR) override {
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(ProcessUrlAction)(LPCWSTR, DWORD action, BYTE* policy,
+                                DWORD policySize, BYTE*, DWORD, DWORD,
+                                DWORD) override {
+        ++urlActions;
+        if (allowActiveXUrlAction(action, policy, policySize)) return S_OK;
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(QueryCustomPolicy)(LPCWSTR, REFGUID, BYTE** policy,
+                                 DWORD* policySize, BYTE*, DWORD,
+                                 DWORD) override {
+        ++customPolicies;
+        if (!policy || !policySize) return E_POINTER;
+        *policy = nullptr;
+        *policySize = 0;
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(SetZoneMapping)(DWORD, LPCWSTR, DWORD) override {
+        return E_NOTIMPL;
+    }
+    STDMETHOD(GetZoneMappings)(DWORD, IEnumString** mappings,
+                               DWORD) override {
+        if (!mappings) return E_POINTER;
+        *mappings = nullptr;
+        return E_NOTIMPL;
+    }
+    STDMETHOD(QueryCustomPolicy)(REFGUID policyId, BYTE** policy,
+                                 DWORD* policySize, BYTE* context,
+                                 DWORD contextSize, DWORD reserved) override {
+        if (!policy || !policySize) return E_POINTER;
+        *policy = nullptr;
+        *policySize = 0;
+        static const GUID confirmObjectSafety = {
+            0x10200490, 0xfa38, 0x11d0,
+            {0xac, 0x0e, 0x00, 0xa0, 0xc9, 0x0f, 0xff, 0xc0}};
+        if (!IsEqualGUID(policyId, confirmObjectSafety) || !context ||
+            contextSize != sizeof(CONFIRMSAFETY) || reserved != 0)
+            return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+
+        const auto* confirmation =
+            reinterpret_cast<const CONFIRMSAFETY*>(context);
+        if (!confirmation->pUnk) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+        CComPtr<IUnknown> requestedObject;
+        CComPtr<IUnknown> thisObject;
+        if (FAILED(confirmation->pUnk->QueryInterface(
+                IID_PPV_ARGS(&requestedObject))))
+            return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+
+        bool isAllowedBridge = false;
+        if (SUCCEEDED(QueryInterface(IID_PPV_ARGS(&thisObject))))
+            isAllowedBridge = requestedObject.p == thisObject.p;
+
+        if (!isAllowedBridge && !allowActiveX)
+            return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+
+        if (isAllowedBridge) {
+            CComPtr<IObjectSafety> objectSafety;
+            DWORD supportedOptions = 0;
+            DWORD enabledOptions = 0;
+            if (FAILED(requestedObject->QueryInterface(
+                    IID_PPV_ARGS(&objectSafety))) ||
+                FAILED(objectSafety->GetInterfaceSafetyOptions(
+                    IID_IDispatch, &supportedOptions, &enabledOptions)) ||
+                (supportedOptions & enabledOptions &
+                 INTERFACESAFE_FOR_UNTRUSTED_CALLER) == 0)
+                return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+        }
+
+        auto* allowed = static_cast<DWORD*>(CoTaskMemAlloc(sizeof(DWORD)));
+        if (!allowed) return E_OUTOFMEMORY;
+        *allowed = URLPOLICY_ALLOW;
+        *policy = reinterpret_cast<BYTE*>(allowed);
+        *policySize = sizeof(*allowed);
+        return S_OK;
+    }
+
+    STDMETHOD(GetInterfaceSafetyOptions)(REFIID interfaceId,
+                                         DWORD* supportedOptions,
+                                         DWORD* enabledOptions) override {
+        if (!supportedOptions || !enabledOptions) return E_POINTER;
+        if (interfaceId != IID_IDispatch) return E_NOINTERFACE;
+        *supportedOptions = INTERFACESAFE_FOR_UNTRUSTED_CALLER;
+        *enabledOptions = safetyOptions_ & *supportedOptions;
+        return S_OK;
+    }
+    STDMETHOD(SetInterfaceSafetyOptions)(REFIID interfaceId, DWORD optionSetMask,
+                                         DWORD enabledOptions) override {
+        if (interfaceId != IID_IDispatch) return E_NOINTERFACE;
+        if ((optionSetMask & ~INTERFACESAFE_FOR_UNTRUSTED_CALLER) != 0 ||
+            (enabledOptions & optionSetMask &
+             ~INTERFACESAFE_FOR_UNTRUSTED_CALLER) != 0)
+            return E_FAIL;
+        safetyOptions_ = (safetyOptions_ & ~optionSetMask) |
+                         (enabledOptions & optionSetMask);
+        return S_OK;
+    }
 
     STDMETHOD(GetTypeInfoCount)(UINT* count) override {
         if (!count) return E_POINTER;
@@ -168,12 +340,38 @@ public:
                              DISPID* ids) override {
         if (!names || !ids) return E_POINTER;
         if (count != 1) return DISP_E_UNKNOWNNAME;
-        if (_wcsicmp(names[0], L"invoke") != 0) return DISP_E_UNKNOWNNAME;
-        ids[0] = 1;
+        if (_wcsicmp(names[0], L"invoke") == 0) ids[0] = 1;
+        else if (_wcsicmp(names[0], L"securityDiagnostics") == 0) ids[0] = 2;
+        else return DISP_E_UNKNOWNNAME;
         return S_OK;
     }
     STDMETHOD(Invoke)(DISPID id, REFIID, LCID, WORD, DISPPARAMS* params,
                       VARIANT* result, EXCEPINFO*, UINT*) override {
+        if (id == 2) {
+            if (!params || params->cArgs != 0) return DISP_E_BADPARAMCOUNT;
+            if (!result) return S_OK;
+            CLSID adodbStreamClsid{};
+            HRESULT nativeAdodbResult =
+                CLSIDFromProgID(L"ADODB.Stream", &adodbStreamClsid);
+            CComPtr<IDispatch> nativeAdodbStream;
+            if (SUCCEEDED(nativeAdodbResult))
+                nativeAdodbResult = CoCreateInstance(
+                    adodbStreamClsid, nullptr, CLSCTX_INPROC_SERVER,
+                    IID_PPV_ARGS(&nativeAdodbStream));
+            wchar_t diagnostics[256]{};
+            swprintf_s(diagnostics,
+                       L"HostQuery=%lu SecurityQuery=%lu HostActions=%lu "
+                       L"SecurityActions=%lu CustomPolicy=%lu Lockdown=0x%08lX "
+                       L"NativeADODB=0x%08lX AllowedAX=%lu",
+                       hostSecurityQueries, securityQueries, hostUrlActions,
+                       urlActions, customPolicies,
+                       static_cast<unsigned long>(localMachineLockdownResult),
+                       static_cast<unsigned long>(nativeAdodbResult),
+                       activeXActionsAllowed);
+            result->vt = VT_BSTR;
+            result->bstrVal = SysAllocString(diagnostics);
+            return result->bstrVal ? S_OK : E_OUTOFMEMORY;
+        }
         if (id != 1) return DISP_E_MEMBERNOTFOUND;
         if (!params || params->cArgs != 1) return DISP_E_BADPARAMCOUNT;
         CComVariant argument;
@@ -193,6 +391,9 @@ public:
         }
         return S_OK;
     }
+
+private:
+    DWORD safetyOptions_ = INTERFACESAFE_FOR_UNTRUSTED_CALLER;
 };
 #pragma warning(pop)
 #endif
@@ -416,6 +617,8 @@ public:
         if (mshtmlConnectionPoint && mshtmlEventCookie)
             mshtmlConnectionPoint->Unadvise(mshtmlEventCookie);
         mshtmlConnectionPoint.Release();
+        if (mshtmlHostSite) mshtmlHostSite->SetSite(nullptr);
+        mshtmlHostSite.Release();
         mshtmlEventSink.Release();
         if (mshtmlHostWindow) mshtmlHostWindow->SetExternalDispatch(nullptr);
         mshtmlExternalDispatch.Release();
@@ -439,6 +642,11 @@ public:
     void setBgColor(uint8_t r, uint8_t g, uint8_t b,
                     uint8_t a);      // Set background color
     void setLocalFileOnly(bool enabled) { localFileOnly = enabled; }
+#if defined(WEBVIEW_MSHTML)
+    void setMshtmlActiveXEnabled(bool enabled) {
+        mshtmlActiveXEnabled = enabled;
+    }
+#endif
     bool run();                      // Main loop
     void navigate(String u);         // Navigate to URL
     void preEval(const String& js);  // Eval JS before page loads
@@ -590,6 +798,7 @@ private:
     String inject;
     HWND mshtmlHost = nullptr;
     CComPtr<IAxWinHostWindow> mshtmlHostWindow;
+    CComPtr<IObjectWithSite> mshtmlHostSite;
     CComPtr<IWebBrowser2> mshtmlBrowser;
     CComPtr<IDispatch> mshtmlExternalDispatch;
     CComPtr<IConnectionPoint> mshtmlConnectionPoint;
@@ -601,6 +810,7 @@ private:
     std::wstring mshtmlPendingNewWindowUrl;
     std::wstring mshtmlNavigationError;
     String pendingEval;
+    bool mshtmlActiveXEnabled = true;
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
     String inject =
         Str("window.external={invoke:arg=>window.webkit."
@@ -1545,12 +1755,25 @@ void WebView::resize() {
 #elif defined(WEBVIEW_MSHTML)
 int WebView::init() {
     if (WinInit() != 0) return -1;
+    HRESULT localMachineLockdownResult = E_PENDING;
     auto reportInitFailure = [](const wchar_t* stage, HRESULT hr) {
         wchar_t message[256]{};
         swprintf_s(message, L"MSHTML initialization failed at %s (HRESULT 0x%08lX).",
                    stage, static_cast<unsigned long>(hr));
         MessageBox(nullptr, message, L"MSHTML error", MB_OK | MB_ICONERROR);
     };
+    if (mshtmlActiveXEnabled) {
+        // Local files run in the Local Machine zone. IE's lockdown feature
+        // adds a separate restriction layer that can block ActiveXObject
+        // before the host URL policy is consulted.
+        localMachineLockdownResult = CoInternetSetFeatureEnabled(
+            FEATURE_LOCALMACHINE_LOCKDOWN, SET_FEATURE_ON_PROCESS, FALSE);
+        if (FAILED(localMachineLockdownResult)) {
+            reportInitFailure(L"Disable MSHTML local machine lockdown",
+                              localMachineLockdownResult);
+            return -1;
+        }
+    }
     const HRESULT oleResult = OleInitialize(nullptr);
     if (FAILED(oleResult)) {
         reportInitFailure(L"OleInitialize", oleResult);
@@ -1602,6 +1825,8 @@ int WebView::init() {
     if (SUCCEEDED(externalHr) && !external) externalHr = E_OUTOFMEMORY;
     if (SUCCEEDED(externalHr) && external) {
         external->AddRef();
+        external->allowActiveX = mshtmlActiveXEnabled;
+        external->localMachineLockdownResult = localMachineLockdownResult;
         external->invoke = [this](const std::wstring& value) {
             const bool isMcpCall = value.compare(0, 15, L"__wv_mcp_call__") == 0;
             if (!js_callback && !isMcpCall) return false;
@@ -1621,8 +1846,14 @@ int WebView::init() {
     if (SUCCEEDED(externalHr))
         externalHr = mshtmlHostWindow->SetExternalDispatch(
             mshtmlExternalDispatch);
+    CComPtr<IObjectWithSite> hostSite;
+    if (SUCCEEDED(externalHr))
+        externalHr = hostUnknown->QueryInterface(IID_PPV_ARGS(&hostSite));
+    if (SUCCEEDED(externalHr))
+        externalHr = hostSite->SetSite(mshtmlExternalDispatch);
+    if (SUCCEEDED(externalHr)) mshtmlHostSite = hostSite;
     if (FAILED(externalHr)) {
-        reportInitFailure(L"SetExternalDispatch", externalHr);
+        reportInitFailure(L"Configure MSHTML host security", externalHr);
         return -1;
     }
     CComPtr<IConnectionPointContainer> connectionContainer;

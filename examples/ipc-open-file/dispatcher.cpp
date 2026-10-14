@@ -124,7 +124,7 @@ bool launchViewer(const std::filesystem::path& executable,
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(executable.c_str(), commandLine.data(),
                         nullptr, nullptr, FALSE, 0, nullptr,
-                        executable.parent_path().c_str(), &startup, &process)) {
+                        document.parent_path().c_str(), &startup, &process)) {
         MessageBoxW(nullptr, L"Could not start the selected WebView engine.",
                     L"MCP IPC open-file", MB_OK | MB_ICONERROR);
         return false;

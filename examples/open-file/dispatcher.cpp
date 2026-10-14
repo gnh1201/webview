@@ -73,7 +73,7 @@ bool launchViewer(const std::filesystem::path& executable,
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(executable.c_str(), commandLine.data(), nullptr, nullptr,
-                        FALSE, 0, nullptr, executable.parent_path().c_str(),
+                        FALSE, 0, nullptr, file.parent_path().c_str(),
                         &startup, &process)) {
         MessageBoxW(nullptr, L"Could not start the selected WebView engine.",
                     L"Open file", MB_OK | MB_ICONERROR);
