@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.15)
+project(ipc_example LANGUAGES CXX)
+
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../ ${CMAKE_CURRENT_BINARY_DIR}/webview)
+set(CMAKE_WIN32_EXECUTABLE ${WIN32})
+
+add_executable(ipc_example ipc.cpp)
+target_compile_features(ipc_example PRIVATE cxx_std_17)
+target_link_libraries(ipc_example PRIVATE webview)
+if(WIN32)
+  target_link_libraries(ipc_example PRIVATE comdlg32)
+elseif(APPLE)
+  set_source_files_properties(ipc.cpp PROPERTIES LANGUAGE OBJCXX)
+  set_property(TARGET ipc_example PROPERTY OBJCXX_STANDARD 17)
+endif()
+configure_file(index.html ${CMAKE_CURRENT_BINARY_DIR}/index.html COPYONLY)

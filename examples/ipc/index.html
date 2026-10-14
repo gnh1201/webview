@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP stdio IPC</title>
+  </head>
+  <body>
+    <button id="run">Run evaluate_js</button>
+    <pre id="result">Click the button to call the MCP tool.</pre>
+    <script>
+      document.getElementById('run').onclick = function () {
+        var output = document.getElementById('result');
+        output.textContent = 'Waiting for MCP...';
+        window.mcp.tools.call('evaluate_js', {
+          script: 'return 1 + 2;',
+          allowUnsafeEval: true
+        }, function (error, result) {
+          if (error) {
+            output.textContent = 'MCP error: ' + error.message;
+            return;
+          }
+          output.textContent = result.content && result.content.length
+            ? result.content[0].text
+            : JSON.stringify(result);
+        });
+      };
+    </script>
+  </body>
+</html>

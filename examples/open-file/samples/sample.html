@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>open-file HTML sample</title>
+    <style>
+      body { font: 16px Segoe UI, sans-serif; margin: 2rem; }
+      button { padding: 0.5rem 0.8rem; }
+      #result { margin-top: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>HTML file sample</h1>
+    <p>This file should open with WebView2, EdgeHTML, or MSHTML fallback.</p>
+    <button id="run">Run JavaScript</button>
+    <p id="result">Waiting for a button click.</p>
+    <script>
+      document.getElementById('run').onclick = function () {
+        document.getElementById('result').innerText =
+          'JavaScript is running in this HTML document.';
+      };
+    </script>
+  </body>
+</html>

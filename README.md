@@ -30,29 +30,44 @@ See [MSHTML build instructions](docs/build.md#mshtml-trident) and the [`mshtml` 
 
 See [Build Steps](docs/build.md) for backend requirements and configuration. For a Visual Studio x64 WebView2 build, configure with `-A x64`; use `-A Win32` for 32-bit. The CMake configuration selects the WebView2 loader for the chosen architecture.
 
+The MCP stdio API uses [nlohmann/json](https://github.com/nlohmann/json) for JSON-RPC parsing and serialization. CMake uses an installed 3.12.0+ package or fetches that release during configuration.
+
 Examples are in [`examples/`](examples/):
 
 - `basic` opens `https://google.com`.
 - `local-only` loads `index.html` from the current directory and displays Not Found if it is missing. External page navigation is blocked with a Forbidden page.
 - `mshtml` demonstrates the legacy MSHTML backend, local content, and a JavaScript-to-native callback.
+- `ipc` demonstrates callback-based `window.mcp.tools.call('evaluate_js', params, callback)` over stdio JSON-RPC; the same example works with Promise-based engines.
+- `ipc-mshtml` and `ipc-edgehtml` run MCP IPC on the legacy Windows engines; MSHTML uses a callback because it has no native Promise support.
+- `open-file` is a Windows example that routes `.hta` files to MSHTML and `.html` files to WebView2, EdgeHTML, or MSHTML according to runtime availability.
 
 The local-only setting applies to document navigation, not to resources referenced by the page. Do not treat it as a network sandbox for untrusted HTML.
 
 ## TODO
 
-- Add compatibility for the HTA (`.hta`) file format. HTA (HTML Application) files are HTML-based Windows applications, traditionally hosted by `mshta.exe`, and can include an `<HTA:APPLICATION>` element to configure application-window behavior such as its border. Compatibility should account for these application-specific semantics, rather than only opening the file as an ordinary HTML page. HTA content has different security assumptions from normal browser content, so this work must also define and document its security behavior. See Microsoft's documentation for the [`HTA:APPLICATION` element](https://learn.microsoft.com/en-us/previous-versions/ms536476%28v%3Dvs.85%29) and [HTA security model](https://learn.microsoft.com/en-us/openspecs/ie_standards/ms-html401e/1cc72255-6605-4e5a-b401-37da1c365a56).
-- Add support for the inter-process communication (IPC) planned for the WelsonJS project.
+- Complete HTA (`.hta`) compatibility semantics. The `open-file` example routes `.hta` files to MSHTML, but does not reproduce standalone `mshta.exe` window and privilege behavior. HTA content has different security assumptions from normal browser content, so document that behavior before treating it as a full HTA host. See Microsoft's documentation for the [`HTA:APPLICATION` element](https://learn.microsoft.com/en-us/previous-versions/ms536476%28v%3Dvs.85%29) and [HTA security model](https://learn.microsoft.com/en-us/openspecs/ie_standards/ms-html401e/1cc72255-6605-4e5a-b401-37da1c365a56).
 
 ## Usage
 
-Include `webview.hpp` and link/configure the dependencies for the selected backend (see [Build Steps](docs/build.md)). By default, the Windows CMake configuration uses WebView2.
+Include `webview.hpp` and configure the dependencies for your backend (see
+[Build Steps](docs/build.md)). By default, Windows uses WebView2.
 
 ```cpp
 #include "webview.hpp"
 
+void callback(wv::WebView& webview, wv::String& arg) {
+  if (arg == Str("hello"))
+    webview.eval(Str("alert('Hello from C++!')"));
+}
+
 WEBVIEW_MAIN {
-  wv::WebView webview{800, 600, true, true, Str("Hello world!")};
-  webview.navigate(Str("https://google.com"));
+  wv::WebView webview{800, 600, true, true, Str("Local files only")};
+  webview.setLocalFileOnly(true);
+  webview.setCallback(callback);
+
+  // To load a website instead, disable local-only mode and set a URL:
+  // webview.setLocalFileOnly(false);
+  // webview.navigate(Str("https://google.com"));
 
   if (webview.init() == -1) {
     return 1;
@@ -65,13 +80,24 @@ WEBVIEW_MAIN {
 }
 ```
 
-To enable local-file-only document navigation, set the option before initialization:
+With local-file-only mode enabled, the app loads `index.html` from its current
+working directory and blocks external document navigation. Place this file in
+that directory before running the app:
 
-```cpp
-webview.setLocalFileOnly(true);
+```html
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Local WebView</title></head>
+<body>
+  <button onclick="window.external.invoke('hello')">
+    Call native code
+  </button>
+</body>
+</html>
 ```
 
-The local-only example demonstrates this option. On Windows, string values use `std::wstring`; wrap string literals with `Str("...")`. `WEBVIEW_MAIN` selects the appropriate Win32 or standard C++ entry point.
+On Windows, strings use `std::wstring`; wrap string literals with `Str("...")`.
+`WEBVIEW_MAIN` selects the appropriate Win32 or standard C++ entry point.
 
 The library supports HTTP(S), local `file:///` URLs, and inline `data:` URLs. EdgeHTML does not support local file URLs; see [Limitations](docs/limitations.md).
 

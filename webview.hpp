@@ -31,6 +31,8 @@
 #include <string>
 #include <vector>
 
+#include "ipc.hpp"
+
 #if defined(WEBVIEW_MSHTML)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -38,7 +40,9 @@
 #include <exdisp.h>
 #include <exdispid.h>
 #include <mshtml.h>
+#include <objsafe.h>
 #include <shellscalingapi.h>
+#include <urlmon.h>
 #include <atlbase.h>
 #include <atlcom.h>
 #include <atlhost.h>
@@ -146,13 +150,184 @@ public:
 };
 
 class MshtmlExternalDispatch
-    : public CComObjectRootEx<CComSingleThreadModel>, public IDispatch {
+    : public CComObjectRootEx<CComSingleThreadModel>,
+      public IDispatch,
+      public IObjectSafety,
+      public IServiceProvider,
+      public IInternetHostSecurityManager,
+      public IInternetSecurityManager {
 public:
     std::function<bool(const std::wstring&)> invoke;
+    std::function<bool(LONG, LONG)> moveWindow;
+    bool allowActiveX = false;
+    DWORD hostSecurityQueries = 0;
+    DWORD securityQueries = 0;
+    DWORD hostUrlActions = 0;
+    DWORD urlActions = 0;
+    DWORD activeXActionsAllowed = 0;
+    DWORD customPolicies = 0;
+    HRESULT localMachineLockdownResult = E_PENDING;
+
+    static bool isActiveXUrlAction(DWORD action) {
+        return (action >= URLACTION_ACTIVEX_MIN &&
+                action <= URLACTION_ACTIVEX_MAX) ||
+               action == URLACTION_SCRIPT_SAFE_ACTIVEX ||
+               action == URLACTION_SCRIPT_OVERRIDE_SAFETY;
+    }
+
+    bool allowActiveXUrlAction(DWORD action, BYTE* policy,
+                               DWORD policySize) {
+        if (!allowActiveX || !policy || policySize < sizeof(DWORD) ||
+            !isActiveXUrlAction(action))
+            return false;
+        *reinterpret_cast<DWORD*>(policy) = URLPOLICY_ALLOW;
+        ++activeXActionsAllowed;
+        return true;
+    }
 
     BEGIN_COM_MAP(MshtmlExternalDispatch)
     COM_INTERFACE_ENTRY(IDispatch)
+    COM_INTERFACE_ENTRY(IObjectSafety)
+    COM_INTERFACE_ENTRY(IServiceProvider)
+    COM_INTERFACE_ENTRY(IInternetHostSecurityManager)
+    COM_INTERFACE_ENTRY(IInternetSecurityManager)
     END_COM_MAP()
+
+    STDMETHOD(QueryService)(REFGUID serviceId, REFIID interfaceId,
+                            void** object) override {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        const bool hostSecurityService =
+            serviceId == SID_SInternetHostSecurityManager &&
+            interfaceId == IID_IInternetHostSecurityManager;
+        const bool securityService = serviceId == SID_SInternetSecurityManager &&
+                                     interfaceId == IID_IInternetSecurityManager;
+        if (hostSecurityService) ++hostSecurityQueries;
+        if (securityService) ++securityQueries;
+        if (!hostSecurityService && !securityService)
+            return E_NOINTERFACE;
+        return QueryInterface(interfaceId, object);
+    }
+    STDMETHOD(GetSecurityId)(BYTE*, DWORD*, DWORD_PTR) override {
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(ProcessUrlAction)(DWORD action, BYTE* policy, DWORD policySize,
+                                BYTE*, DWORD, DWORD, DWORD) override {
+        ++hostUrlActions;
+        if (allowActiveXUrlAction(action, policy, policySize)) return S_OK;
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(SetSecuritySite)(IInternetSecurityMgrSite*) override {
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(GetSecuritySite)(IInternetSecurityMgrSite** site) override {
+        if (!site) return E_POINTER;
+        *site = nullptr;
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(MapUrlToZone)(LPCWSTR, DWORD* zone, DWORD) override {
+        if (!zone) return E_POINTER;
+        *zone = URLZONE_LOCAL_MACHINE;
+        return S_OK;
+    }
+    STDMETHOD(GetSecurityId)(LPCWSTR, BYTE*, DWORD*, DWORD_PTR) override {
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(ProcessUrlAction)(LPCWSTR, DWORD action, BYTE* policy,
+                                DWORD policySize, BYTE*, DWORD, DWORD,
+                                DWORD) override {
+        ++urlActions;
+        if (allowActiveXUrlAction(action, policy, policySize)) return S_OK;
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(QueryCustomPolicy)(LPCWSTR, REFGUID, BYTE** policy,
+                                 DWORD* policySize, BYTE*, DWORD,
+                                 DWORD) override {
+        ++customPolicies;
+        if (!policy || !policySize) return E_POINTER;
+        *policy = nullptr;
+        *policySize = 0;
+        return INET_E_DEFAULT_ACTION;
+    }
+    STDMETHOD(SetZoneMapping)(DWORD, LPCWSTR, DWORD) override {
+        return E_NOTIMPL;
+    }
+    STDMETHOD(GetZoneMappings)(DWORD, IEnumString** mappings,
+                               DWORD) override {
+        if (!mappings) return E_POINTER;
+        *mappings = nullptr;
+        return E_NOTIMPL;
+    }
+    STDMETHOD(QueryCustomPolicy)(REFGUID policyId, BYTE** policy,
+                                 DWORD* policySize, BYTE* context,
+                                 DWORD contextSize, DWORD reserved) override {
+        if (!policy || !policySize) return E_POINTER;
+        *policy = nullptr;
+        *policySize = 0;
+        static const GUID confirmObjectSafety = {
+            0x10200490, 0xfa38, 0x11d0,
+            {0xac, 0x0e, 0x00, 0xa0, 0xc9, 0x0f, 0xff, 0xc0}};
+        if (!IsEqualGUID(policyId, confirmObjectSafety) || !context ||
+            contextSize != sizeof(CONFIRMSAFETY) || reserved != 0)
+            return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+
+        const auto* confirmation =
+            reinterpret_cast<const CONFIRMSAFETY*>(context);
+        if (!confirmation->pUnk) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+        CComPtr<IUnknown> requestedObject;
+        CComPtr<IUnknown> thisObject;
+        if (FAILED(confirmation->pUnk->QueryInterface(
+                IID_PPV_ARGS(&requestedObject))))
+            return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+
+        bool isAllowedBridge = false;
+        if (SUCCEEDED(QueryInterface(IID_PPV_ARGS(&thisObject))))
+            isAllowedBridge = requestedObject.p == thisObject.p;
+
+        if (!isAllowedBridge && !allowActiveX)
+            return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+
+        if (isAllowedBridge) {
+            CComPtr<IObjectSafety> objectSafety;
+            DWORD supportedOptions = 0;
+            DWORD enabledOptions = 0;
+            if (FAILED(requestedObject->QueryInterface(
+                    IID_PPV_ARGS(&objectSafety))) ||
+                FAILED(objectSafety->GetInterfaceSafetyOptions(
+                    IID_IDispatch, &supportedOptions, &enabledOptions)) ||
+                (supportedOptions & enabledOptions &
+                 INTERFACESAFE_FOR_UNTRUSTED_CALLER) == 0)
+                return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+        }
+
+        auto* allowed = static_cast<DWORD*>(CoTaskMemAlloc(sizeof(DWORD)));
+        if (!allowed) return E_OUTOFMEMORY;
+        *allowed = URLPOLICY_ALLOW;
+        *policy = reinterpret_cast<BYTE*>(allowed);
+        *policySize = sizeof(*allowed);
+        return S_OK;
+    }
+
+    STDMETHOD(GetInterfaceSafetyOptions)(REFIID interfaceId,
+                                         DWORD* supportedOptions,
+                                         DWORD* enabledOptions) override {
+        if (!supportedOptions || !enabledOptions) return E_POINTER;
+        if (interfaceId != IID_IDispatch) return E_NOINTERFACE;
+        *supportedOptions = INTERFACESAFE_FOR_UNTRUSTED_CALLER;
+        *enabledOptions = safetyOptions_ & *supportedOptions;
+        return S_OK;
+    }
+    STDMETHOD(SetInterfaceSafetyOptions)(REFIID interfaceId, DWORD optionSetMask,
+                                         DWORD enabledOptions) override {
+        if (interfaceId != IID_IDispatch) return E_NOINTERFACE;
+        if ((optionSetMask & ~INTERFACESAFE_FOR_UNTRUSTED_CALLER) != 0 ||
+            (enabledOptions & optionSetMask &
+             ~INTERFACESAFE_FOR_UNTRUSTED_CALLER) != 0)
+            return E_FAIL;
+        safetyOptions_ = (safetyOptions_ & ~optionSetMask) |
+                         (enabledOptions & optionSetMask);
+        return S_OK;
+    }
 
     STDMETHOD(GetTypeInfoCount)(UINT* count) override {
         if (!count) return E_POINTER;
@@ -166,12 +341,54 @@ public:
                              DISPID* ids) override {
         if (!names || !ids) return E_POINTER;
         if (count != 1) return DISP_E_UNKNOWNNAME;
-        if (_wcsicmp(names[0], L"invoke") != 0) return DISP_E_UNKNOWNNAME;
-        ids[0] = 1;
+        if (_wcsicmp(names[0], L"invoke") == 0) ids[0] = 1;
+        else if (_wcsicmp(names[0], L"securityDiagnostics") == 0) ids[0] = 2;
+        else if (_wcsicmp(names[0], L"moveTo") == 0) ids[0] = 3;
+        else return DISP_E_UNKNOWNNAME;
         return S_OK;
     }
     STDMETHOD(Invoke)(DISPID id, REFIID, LCID, WORD, DISPPARAMS* params,
                       VARIANT* result, EXCEPINFO*, UINT*) override {
+        if (id == 2) {
+            if (!params || params->cArgs != 0) return DISP_E_BADPARAMCOUNT;
+            if (!result) return S_OK;
+            CLSID adodbStreamClsid{};
+            HRESULT nativeAdodbResult =
+                CLSIDFromProgID(L"ADODB.Stream", &adodbStreamClsid);
+            CComPtr<IDispatch> nativeAdodbStream;
+            if (SUCCEEDED(nativeAdodbResult))
+                nativeAdodbResult = CoCreateInstance(
+                    adodbStreamClsid, nullptr, CLSCTX_INPROC_SERVER,
+                    IID_PPV_ARGS(&nativeAdodbStream));
+            wchar_t diagnostics[256]{};
+            swprintf_s(diagnostics,
+                       L"HostQuery=%lu SecurityQuery=%lu HostActions=%lu "
+                       L"SecurityActions=%lu CustomPolicy=%lu Lockdown=0x%08lX "
+                       L"NativeADODB=0x%08lX AllowedAX=%lu",
+                       hostSecurityQueries, securityQueries, hostUrlActions,
+                       urlActions, customPolicies,
+                       static_cast<unsigned long>(localMachineLockdownResult),
+                       static_cast<unsigned long>(nativeAdodbResult),
+                       activeXActionsAllowed);
+            result->vt = VT_BSTR;
+            result->bstrVal = SysAllocString(diagnostics);
+            return result->bstrVal ? S_OK : E_OUTOFMEMORY;
+        }
+        if (id == 3) {
+            if (!params || params->cArgs != 2) return DISP_E_BADPARAMCOUNT;
+            CComVariant x, y;
+            HRESULT hr = VariantChangeType(&x, &params->rgvarg[1], 0, VT_I4);
+            if (SUCCEEDED(hr))
+                hr = VariantChangeType(&y, &params->rgvarg[0], 0, VT_I4);
+            if (FAILED(hr)) return DISP_E_TYPEMISMATCH;
+            const bool moved = moveWindow && moveWindow(x.lVal, y.lVal);
+            if (result) {
+                VariantInit(result);
+                result->vt = VT_BOOL;
+                result->boolVal = moved ? VARIANT_TRUE : VARIANT_FALSE;
+            }
+            return S_OK;
+        }
         if (id != 1) return DISP_E_MEMBERNOTFOUND;
         if (!params || params->cArgs != 1) return DISP_E_BADPARAMCOUNT;
         CComVariant argument;
@@ -191,6 +408,9 @@ public:
         }
         return S_OK;
     }
+
+private:
+    DWORD safetyOptions_ = INTERFACESAFE_FOR_UNTRUSTED_CALLER;
 };
 #pragma warning(pop)
 #endif
@@ -220,12 +440,14 @@ public:
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "user32.lib")
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <unknwn.h>
 #include <WebView2.h>
 #include <shellscalingapi.h>
 #include <shlwapi.h>
 #include <tchar.h>
 #include <wil/com.h>
-#include <windows.h>
 #include <wrl.h>
 
 #include <cstdlib>
@@ -339,7 +561,55 @@ public:
           resizable(resizable_),
           debug(debug_),
           title(title_),
-          url(url_) {}
+          url(url_) {
+        inject += Str(
+            "if(!window.__wvMcpInstalled){window.__wvMcpInstalled=true;"
+            "window.mcp=window.mcp||{};window.mcp.tools=window.mcp.tools||{};"
+            "window.__wvMcpPending={};window.__wvMcpNext=0;");
+#if defined(WEBVIEW_MSHTML)
+        inject += Str(
+            "try{window.moveTo=function(x,y){return window.external.moveTo(x,y);};}catch(e){}"
+            "if(!window.JSON){window.JSON={};"
+            "window.JSON.stringify=function(v){function q(s){return '\"'+String(s).replace(/[\\\"\\\\\\x00-\\x1f]/g,function(c){"
+            "var m={'\\\"':'\\\\\\\"','\\\\':'\\\\\\\\','\\b':'\\\\b','\\f':'\\\\f','\\n':'\\\\n','\\r':'\\\\r','\\t':'\\\\t'};"
+            "var n=c.charCodeAt(0);return m[c]||'\\\\u'+('0000'+n.toString(16)).slice(-4);})+'\"';}"
+            "function e(x){if(x===null)return 'null';var t=typeof x;if(t==='string')return q(x);"
+            "if(t==='number'||t==='boolean')return isFinite(x)?String(x):'null';if(t!=='object')return undefined;"
+            "var a=[],i,k,z;if(Object.prototype.toString.call(x)==='[object Array]'){for(i=0;i<x.length;i++){z=e(x[i]);a.push(z===undefined?'null':z);}return '['+a.join(',')+']';}"
+            "for(k in x)if(Object.prototype.hasOwnProperty.call(x,k)){z=e(x[k]);if(z!==undefined)a.push(q(k)+':'+z);}return '{'+a.join(',')+'}';}"
+            "return e(v);};window.JSON.parse=function(s){return eval('('+s+')');};}"
+            "window.__wvMcpResolve=function(i,v,e){var cb=window.__wvMcpPending[i];"
+            "if(!cb)return;delete window.__wvMcpPending[i];if(e){cb(new Error(v),null);return;}"
+            "var r=v;if(r&&r.isError){var m=r.content&&r.content.length?"
+            "r.content[0].text:'MCP tool call failed';cb(new Error(m),r);}else cb(null,r);};"
+            "window.mcp.tools.call=function(n,p,cb){if(typeof cb!=='function')"
+            "throw new Error('MSHTML requires a callback: call(name, params, callback)');"
+            "var i=++window.__wvMcpNext;window.__wvMcpPending[i]=cb;"
+            "if(window.external.invoke('__wv_mcp_call__'+i+'|'+encodeURIComponent(n)+'|'+"
+            "encodeURIComponent(JSON.stringify(p==null?{}:p)))===false){"
+            "delete window.__wvMcpPending[i];cb(new Error('Native IPC bridge rejected the request'),null);}};}");
+#else
+        inject += Str(
+            "if(!window.Promise){window.Promise=function(f){var s=0,v,h=[];"
+            "function run(){while(h.length){var x=h.shift(),g=s===1?x[0]:x[1];"
+            "if(g){try{x[2](g(v));}catch(e){x[3](e);}}else(s===1?x[2]:x[3])(v);}}"
+            "this.then=function(a,b){return new window.Promise(function(r,j){"
+            "h.push([a,b,r,j]);if(s)run();});};this['catch']=function(b){return this.then(null,b);};"
+            "function done(n,x){if(s)return;s=n;v=x;run();}try{f(function(x){done(1,x);},"
+            "function(x){done(2,x);});}catch(e){done(2,e);}};}"
+            "window.__wvMcpResolve=function(i,v,e){var d=window.__wvMcpPending[i];"
+            "if(!d)return;delete window.__wvMcpPending[i];if(e){d.reject(new Error(v));return;}"
+            "var r=v;if(r&&r.isError){var m=r.content&&r.content.length?"
+            "r.content[0].text:'MCP tool call failed';d.reject(new Error(m));}else d.resolve(r);};"
+            "window.mcp.tools.call=function(n,p,cb){var promise=new window.Promise(function(resolve,reject){"
+            "var i=++window.__wvMcpNext;window.__wvMcpPending[i]={resolve:resolve,reject:reject};"
+            "if(window.external.invoke('__wv_mcp_call__'+i+'|'+encodeURIComponent(n)+'|'+"
+            "encodeURIComponent(JSON.stringify(p==null?{}:p)))===false){"
+            "delete window.__wvMcpPending[i];reject(new Error('Native IPC bridge rejected the request'));}});"
+            "if(typeof cb==='function')promise.then(function(r){cb(null,r);},function(e){cb(e,null);});"
+            "return promise;};}");
+#endif
+    }
     ~WebView() {
         init_done = false;
 #if defined(WEBVIEW_EDGE)
@@ -365,6 +635,8 @@ public:
         if (mshtmlConnectionPoint && mshtmlEventCookie)
             mshtmlConnectionPoint->Unadvise(mshtmlEventCookie);
         mshtmlConnectionPoint.Release();
+        if (mshtmlHostSite) mshtmlHostSite->SetSite(nullptr);
+        mshtmlHostSite.Release();
         mshtmlEventSink.Release();
         if (mshtmlHostWindow) mshtmlHostWindow->SetExternalDispatch(nullptr);
         mshtmlExternalDispatch.Release();
@@ -388,15 +660,34 @@ public:
     void setBgColor(uint8_t r, uint8_t g, uint8_t b,
                     uint8_t a);      // Set background color
     void setLocalFileOnly(bool enabled) { localFileOnly = enabled; }
+#if defined(WEBVIEW_MSHTML)
+    void setMshtmlActiveXEnabled(bool enabled) {
+        mshtmlActiveXEnabled = enabled;
+    }
+#endif
     bool run();                      // Main loop
     void navigate(String u);         // Navigate to URL
     void preEval(const String& js);  // Eval JS before page loads
     void eval(const String& js);     // Eval JS
+    void connectProcess(const std::string& executable,
+                        const std::vector<std::string>& arguments = {}) {
+        mcpClient.connect(executable, arguments);
+    }
+    void disconnectProcess() { mcpClient.disconnect(); }
+    bool isProcessConnected() const { return mcpClient.connected(); }
+    std::string sendIpc(const std::string& method,
+                        const std::string& paramsJson) {
+        return mcpClient.send(method, paramsJson);
+    }
     void css(const String& css);     // Inject CSS
     void exit();                     // Stop loop
 
 private:
     void showForbiddenPage();
+    bool handleMcpMessage(const String& message);
+    static String fromUtf8(const std::string& value);
+    static std::string percentDecode(const std::string& value);
+    detail::StdioMcpClient mcpClient;
 
     // Properties for init
     int width;
@@ -525,6 +816,7 @@ private:
     String inject;
     HWND mshtmlHost = nullptr;
     CComPtr<IAxWinHostWindow> mshtmlHostWindow;
+    CComPtr<IObjectWithSite> mshtmlHostSite;
     CComPtr<IWebBrowser2> mshtmlBrowser;
     CComPtr<IDispatch> mshtmlExternalDispatch;
     CComPtr<IConnectionPoint> mshtmlConnectionPoint;
@@ -536,6 +828,7 @@ private:
     std::wstring mshtmlPendingNewWindowUrl;
     std::wstring mshtmlNavigationError;
     String pendingEval;
+    bool mshtmlActiveXEnabled = true;
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
     String inject =
         Str("window.external={invoke:arg=>window.webkit."
@@ -825,9 +1118,9 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 std::vector<std::wstring> callbacks;
                 callbacks.swap(w->mshtmlPendingCallbacks);
                 for (auto& argument : callbacks) {
-                    if (!w->js_callback) continue;
                     try {
-                        w->js_callback(*w, argument);
+                        if (!w->handleMcpMessage(argument) && w->js_callback)
+                            w->js_callback(*w, argument);
                     } catch (...) {
                         MessageBox(hwnd,
                                    L"An exception was thrown by the MSHTML callback.",
@@ -987,8 +1280,8 @@ int WebView::init() {
         reinterpret_cast<int64_t>(hwnd), Rect()));
     webview.Settings().IsScriptNotifyAllowed(true);
     webview.ScriptNotify([this](const auto&, const auto& args) {
-        if (js_callback) {
-            std::wstring ws{args.Value()};
+        std::wstring ws{args.Value()};
+        if (!handleMcpMessage(ws) && js_callback) {
             js_callback(*this, ws);
         }
     });
@@ -1121,17 +1414,13 @@ int WebView::init() {
         [this, lifetime](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
             const auto alive = lifetime.lock();
             if (!alive || !alive->load()) return S_OK;
-            if (js_callback) {
-                // Consider args->get_WebMessageAsJson?
-                LPWSTR messageRaw;
-                auto getMessageResult =
-                    args->TryGetWebMessageAsString(&messageRaw);
-                if (FAILED(getMessageResult)) {
-                    return getMessageResult;
-                }
-
-                std::wstring message(messageRaw);
-                CoTaskMemFree(messageRaw);
+            // Consider args->get_WebMessageAsJson?
+            LPWSTR messageRaw;
+            auto getMessageResult = args->TryGetWebMessageAsString(&messageRaw);
+            if (FAILED(getMessageResult)) return getMessageResult;
+            std::wstring message(messageRaw);
+            CoTaskMemFree(messageRaw);
+            if (!handleMcpMessage(message) && js_callback) {
                 js_callback(*this, message);
             }
             return S_OK;
@@ -1484,12 +1773,25 @@ void WebView::resize() {
 #elif defined(WEBVIEW_MSHTML)
 int WebView::init() {
     if (WinInit() != 0) return -1;
+    HRESULT localMachineLockdownResult = E_PENDING;
     auto reportInitFailure = [](const wchar_t* stage, HRESULT hr) {
         wchar_t message[256]{};
         swprintf_s(message, L"MSHTML initialization failed at %s (HRESULT 0x%08lX).",
                    stage, static_cast<unsigned long>(hr));
         MessageBox(nullptr, message, L"MSHTML error", MB_OK | MB_ICONERROR);
     };
+    if (mshtmlActiveXEnabled) {
+        // Local files run in the Local Machine zone. IE's lockdown feature
+        // adds a separate restriction layer that can block ActiveXObject
+        // before the host URL policy is consulted.
+        localMachineLockdownResult = CoInternetSetFeatureEnabled(
+            FEATURE_LOCALMACHINE_LOCKDOWN, SET_FEATURE_ON_PROCESS, FALSE);
+        if (FAILED(localMachineLockdownResult)) {
+            reportInitFailure(L"Disable MSHTML local machine lockdown",
+                              localMachineLockdownResult);
+            return -1;
+        }
+    }
     const HRESULT oleResult = OleInitialize(nullptr);
     if (FAILED(oleResult)) {
         reportInitFailure(L"OleInitialize", oleResult);
@@ -1541,8 +1843,16 @@ int WebView::init() {
     if (SUCCEEDED(externalHr) && !external) externalHr = E_OUTOFMEMORY;
     if (SUCCEEDED(externalHr) && external) {
         external->AddRef();
+        external->allowActiveX = mshtmlActiveXEnabled;
+        external->localMachineLockdownResult = localMachineLockdownResult;
+        external->moveWindow = [this](LONG x, LONG y) {
+            return hwnd && IsWindow(hwnd) &&
+                   SetWindowPos(hwnd, nullptr, x, y, 0, 0,
+                                SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE);
+        };
         external->invoke = [this](const std::wstring& value) {
-            if (!js_callback) return false;
+            const bool isMcpCall = value.compare(0, 15, L"__wv_mcp_call__") == 0;
+            if (!js_callback && !isMcpCall) return false;
             try {
                 mshtmlPendingCallbacks.push_back(value);
             } catch (...) {
@@ -1559,8 +1869,14 @@ int WebView::init() {
     if (SUCCEEDED(externalHr))
         externalHr = mshtmlHostWindow->SetExternalDispatch(
             mshtmlExternalDispatch);
+    CComPtr<IObjectWithSite> hostSite;
+    if (SUCCEEDED(externalHr))
+        externalHr = hostUnknown->QueryInterface(IID_PPV_ARGS(&hostSite));
+    if (SUCCEEDED(externalHr))
+        externalHr = hostSite->SetSite(mshtmlExternalDispatch);
+    if (SUCCEEDED(externalHr)) mshtmlHostSite = hostSite;
     if (FAILED(externalHr)) {
-        reportInitFailure(L"SetExternalDispatch", externalHr);
+        reportInitFailure(L"Configure MSHTML host security", externalHr);
         return -1;
     }
     CComPtr<IConnectionPointContainer> connectionContainer;
@@ -1808,13 +2124,10 @@ int WebView::init() {
         @selector(userContentController:didReceiveScriptMessage:),
         imp_implementationWithBlock(
             [=](id, SEL, WKScriptMessage* scriptMessage) {
-                if (this->js_callback) {
-                    id body = [scriptMessage body];
-                    if (![body isKindOfClass:[NSString class]]) {
-                        return;
-                    }
-
-                    std::string msg = [body UTF8String];
+                id body = [scriptMessage body];
+                if (![body isKindOfClass:[NSString class]]) return;
+                std::string msg = [body UTF8String];
+                if (!this->handleMcpMessage(msg) && this->js_callback) {
                     this->js_callback(*this, msg);
                 }
             }),
@@ -2110,9 +2423,9 @@ void WebView::external_message_received_cb(WebKitUserContentManager*,
                                            WebKitJavascriptResult* r,
                                            gpointer arg) {
     WebView* w = static_cast<WebView*>(arg);
-    if (w->js_callback) {
-        JSCValue* value = webkit_javascript_result_get_js_value(r);
-        std::string str = std::string(jsc_value_to_string(value));
+    JSCValue* value = webkit_javascript_result_get_js_value(r);
+    std::string str = std::string(jsc_value_to_string(value));
+    if (!w->handleMcpMessage(str) && w->js_callback) {
         w->js_callback(*w, str);
     }
 }
@@ -2169,6 +2482,82 @@ void WebView::css(const wv::String& css) {
 }
 
 void WebView::setCallback(jscb callback) { js_callback = callback; }
+
+wv::String WebView::fromUtf8(const std::string& value) {
+#if defined(WEBVIEW_IS_WIN)
+    if (value.empty()) return {};
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                        value.data(), static_cast<int>(value.size()),
+                                        nullptr, 0);
+    if (size <= 0) throw std::runtime_error("invalid UTF-8 MCP response");
+    std::wstring converted(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+                        static_cast<int>(value.size()), converted.data(), size);
+    return converted;
+#else
+    return value;
+#endif
+}
+
+std::string WebView::percentDecode(const std::string& value) {
+    auto hexValue = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string decoded;
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] != '%') { decoded += value[i]; continue; }
+        if (i + 2 >= value.size()) throw std::runtime_error("invalid encoded MCP message");
+        const int hi = hexValue(value[i + 1]);
+        const int lo = hexValue(value[i + 2]);
+        if (hi < 0 || lo < 0) throw std::runtime_error("invalid encoded MCP message");
+        decoded += static_cast<char>((hi << 4) | lo);
+        i += 2;
+    }
+    return decoded;
+}
+
+bool WebView::handleMcpMessage(const wv::String& message) {
+    const wv::String prefix = Str("__wv_mcp_call__");
+    if (message.compare(0, prefix.size(), prefix) != 0) return false;
+    const auto body = message.substr(prefix.size());
+    const auto first = body.find(Str("|"));
+    const auto second = first == wv::String::npos
+                            ? wv::String::npos
+                            : body.find(Str("|"), first + 1);
+    std::string id;
+    try {
+        if (first == wv::String::npos || second == wv::String::npos)
+            throw std::runtime_error("malformed MCP tool call");
+        for (auto c : body.substr(0, first)) {
+            if (c < Str('0') || c > Str('9')) throw std::runtime_error("invalid MCP request id");
+            id += static_cast<char>(c);
+        }
+        if (id.empty()) throw std::runtime_error("invalid MCP request id");
+        auto narrowAscii = [](const wv::String& text) {
+            std::string result;
+            result.reserve(text.size());
+            for (auto c : text) {
+                if (c > 0x7f) throw std::runtime_error("invalid encoded MCP message");
+                result += static_cast<char>(c);
+            }
+            return result;
+        };
+        const auto name = percentDecode(narrowAscii(body.substr(first + 1, second - first - 1)));
+        const auto args = nlohmann::json::parse(
+            percentDecode(narrowAscii(body.substr(second + 1))));
+        const auto result = nlohmann::json::parse(mcpClient.callTool(name, args));
+        eval(Str("window.__wvMcpResolve(") + fromUtf8(id) + Str(",") +
+             fromUtf8(result.dump(-1, ' ', true)) + Str(",false);"));
+    } catch (const std::exception& error) {
+        if (id.empty()) id = "0";
+        eval(Str("window.__wvMcpResolve(") + fromUtf8(id) + Str(",") +
+             fromUtf8(nlohmann::json(error.what()).dump()) + Str(",true);"));
+    }
+    return true;
+}
 
 void WebView::preEval(const wv::String& js) {
     inject += Str("(()=>{") + js + Str("})()");  // TODO: is the IIFE necessary?

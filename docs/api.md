@@ -16,6 +16,7 @@
   - [webview.navigate](#navigate)
   - [webview.preEval](#preeval)
   - [webview.eval](#eval)
+  - [stdio MCP process](#stdio-mcp-process)
   - [webview.css](#css)
   - [webview.exit](#exit)
 
@@ -45,6 +46,39 @@ window.external.invoke(JSON.stringify({ foo: 'bar' }));
 ## C++ API
 
 Note: On Windows, all strings are `std::wstring`. On MacOS and Linux, they are `std::string`.
+
+### stdio MCP process
+
+`WebView::connectProcess(executable, arguments)` launches a child process with
+stdin/stdout pipes, then performs MCP `initialize` and
+`notifications/initialized` using JSON-RPC 2.0. `sendIpc(method, paramsJson)`
+sends a JSON-RPC request and returns its raw JSON `result`. Call
+`disconnectProcess()` to close the process; the WebView also closes it during
+destruction. These APIs are common to every WebView backend. The process and
+arguments use UTF-8. JSON-RPC messages are parsed and serialized with
+`nlohmann/json` 3.12.0 or later. CMake uses an installed package when available
+and otherwise fetches the pinned release during configuration.
+
+Pages loaded in the WebView get `window.mcp.tools.call(name, params[, callback])`.
+It sends MCP `tools/call`. WebView2 and EdgeHTML return a Promise resolving to
+the server's result object, including `content`:
+
+```js
+window.mcp.tools.call('evaluate_js', {
+  script: '1 + 2',
+  allowUnsafeEval: true
+})
+  .then(function (result) { console.log(result.content[0].text); });
+```
+
+MSHTML has no native Promise support, so it uses the optional Node-style
+callback: `window.mcp.tools.call(name, params, function (error, result) { ... })`.
+Promise-capable backends accept the same callback and still return the Promise.
+On success `error` is null; on failure `result` is null.
+
+The [IPC example](../examples/ipc/) shows a button invoking `evaluate_js` and
+displaying the returned value. Set the process paths in `examples/ipc/ipc.cpp`.
+The tool name and arguments follow the [WelsonJS mcploader.js](https://raw.githubusercontent.com/gnh1201/welsonjs/refs/heads/master/mcploader.js) interface.
 
 If you need to support Windows, make sure to use Win32 `WinMain` entry point:
 

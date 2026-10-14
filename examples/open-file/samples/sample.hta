@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>open-file HTA sample</title>
+    <hta:application
+      id="openFileSample"
+      applicationname="open-file sample"
+      border="dialog"
+      caption="yes"
+      showintaskbar="yes"
+      singleinstance="no"
+      sysmenu="yes"
+      windowstate="normal"
+    />
+    <style>
+      body { font: 16px Segoe UI, sans-serif; margin: 2rem; }
+      button { padding: 0.5rem 0.8rem; }
+      #result { margin-top: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>HTA file sample</h1>
+    <p>This file should be routed to the MSHTML viewer.</p>
+    <button id="run">Run JavaScript</button>
+    <button id="check-file">Check relative FileExists</button>
+    <button id="check-adodb">Test ADODB.Stream creation</button>
+    <p id="result">Waiting for a button click.</p>
+    <script>
+      document.getElementById('run').onclick = function () {
+        document.getElementById('result').innerText =
+          'The .hta file opened through the MSHTML backend.';
+      };
+      document.getElementById('check-file').onclick = function () {
+        var output = document.getElementById('result');
+        try {
+          var fso = new ActiveXObject('Scripting.FileSystemObject');
+          output.innerText = 'FileExists("sample.hta"): ' +
+            fso.FileExists('sample.hta');
+        } catch (error) {
+          output.innerText = 'FileSystemObject error: ' + error.message;
+        }
+      };
+      document.getElementById('check-adodb').onclick = function () {
+        var output = document.getElementById('result');
+        try {
+          var stream = new ActiveXObject('ADODB.Stream');
+          output.innerText = 'ADODB.Stream creation succeeded.';
+          stream = null;
+        } catch (error) {
+          var number = typeof error.number === 'undefined'
+            ? 'unknown'
+            : '0x' + (error.number >>> 0).toString(16);
+          output.innerText = 'ADODB.Stream creation failed (' + number + '): ' +
+            (error.description || error.message || String(error));
+          try {
+            output.innerText += '\nSecurity diagnostics: ' +
+              window.external.securityDiagnostics();
+          } catch (diagnosticError) {
+            output.innerText += '\nSecurity diagnostics unavailable: ' +
+              diagnosticError.message;
+          }
+        }
+      };
+    </script>
+  </body>
+</html>
