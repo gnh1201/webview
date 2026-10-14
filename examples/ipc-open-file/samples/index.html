@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP IPC open-file - HTML</title>
+  </head>
+  <body>
+    <h1>MCP stdio IPC with HTML</h1>
+    <p>The dispatcher selects the best available HTML engine.</p>
+    <button id="run">Run evaluate_js</button>
+    <pre id="result">Click the button to ask app.js to evaluate 1 + 2.</pre>
+    <script>
+      document.getElementById('run').onclick = function () {
+        var output = document.getElementById('result');
+        output.textContent = 'Waiting for app.js...';
+        window.mcp.tools.call('evaluate_js', {
+          script: 'return 1 + 2;',
+          allowUnsafeEval: true
+        }, function (error, result) {
+          if (error) {
+            output.textContent = 'MCP error: ' + error.message;
+            return;
+          }
+          output.textContent = result.content && result.content.length
+            ? result.content[0].text
+            : JSON.stringify(result);
+        });
+      };
+    </script>
+  </body>
+</html>

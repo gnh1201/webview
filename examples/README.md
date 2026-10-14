@@ -75,6 +75,27 @@ Try the included samples from the repository root:
 With a multi-configuration Visual Studio generator, use
 `out/build/open-file/bin/Debug/open_file.exe` instead.
 
+`ipc-open-file` combines stdio MCP IPC with the `open-file` engine selection.
+It looks beside the executable for `app.js` and `index.html` (or `index.hta` if
+there is no HTML entry point). When a required file is missing, it opens a file
+picker. `.hta` documents use MSHTML; HTML documents use WebView2, EdgeHTML, or
+MSHTML according to runtime availability. Both sample entry points are copied
+beside the executable. The HTML sample is selected by default; pass a document
+and optionally an `app.js` path to select files directly:
+
+```powershell
+cmake -S examples/ipc-open-file -B out/build/ipc-open-file -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build out/build/ipc-open-file --config Debug
+.\out\build\ipc-open-file\bin\ipc_open_file.exe
+.\out\build\ipc-open-file\bin\ipc_open_file.exe .\examples\ipc-open-file\samples\index.hta C:\path\to\app.js
+```
+
+With a multi-configuration Visual Studio generator, run
+`out/build/ipc-open-file/bin/Debug/ipc_open_file.exe`. Its button calls
+`evaluate_js` with `allowUnsafeEval: true`; adjust the `cscript.exe` selection in
+the viewer if the WelsonJS installation requires a different Windows Script
+Host architecture. The MSHTML backend requires ATL.
+
 ```sh
 mkdir build
 cd build

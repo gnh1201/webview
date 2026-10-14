@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MCP IPC open-file - HTA</title>
+    <hta:application
+      id="mcpIpcExample"
+      applicationname="MCP IPC open-file"
+      border="thin"
+      caption="yes"
+      showintaskbar="yes"
+      singleinstance="yes"
+      sysmenu="yes"
+      windowstate="normal"
+    />
+  </head>
+  <body>
+    <h1>MCP stdio IPC with HTA</h1>
+    <p>The dispatcher routes HTA documents to MSHTML.</p>
+    <button id="run">Run evaluate_js</button>
+    <pre id="result">Click the button to ask app.js to evaluate 1 + 2.</pre>
+    <script>
+      document.getElementById('run').onclick = function () {
+        var output = document.getElementById('result');
+        output.innerText = 'Waiting for app.js...';
+        window.mcp.tools.call('evaluate_js', {
+          script: 'return 1 + 2;',
+          allowUnsafeEval: true
+        }, function (error, result) {
+          if (error) {
+            output.innerText = 'MCP error: ' + error.message;
+            return;
+          }
+          output.innerText = result.content && result.content.length
+            ? result.content[0].text
+            : 'Empty MCP result';
+        });
+      };
+    </script>
+  </body>
+</html>
