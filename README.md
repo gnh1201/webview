@@ -109,3 +109,9 @@ The library supports HTTP(S), local `file:///` URLs, and inline `data:` URLs. Ed
 - [API Reference](docs/api.md)
 - [Limitations](docs/limitations.md)
 - [Examples](examples/README.md)
+
+## MSHTML compatibility test
+
+MSHTML compatibility was exercised with an `mshta`-style industrial application scenario, and the application behaved normally during testing:
+
+![MSHTML compatibility test in an mshta-style industrial application](https://catswords.blob.core.windows.net/welsonjs/images/screenshot9.png)
