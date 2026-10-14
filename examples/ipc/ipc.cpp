@@ -91,22 +91,6 @@ std::string pathToUtf8(const std::filesystem::path& path) {
     return path.u8string();
 }
 
-#if defined(WV_IPC_EDGEHTML)
-std::string edgeHtmlDataUrl() {
-    static constexpr char page[] = R"HTML(<!doctype html><html><head><meta charset="utf-8">
-<title>MCP stdio IPC (EdgeHTML)</title></head><body>
-<h1>MCP stdio IPC</h1><button id="run">Run evaluate_js</button>
-<pre id="result">Click the button to evaluate JavaScript.</pre>
-<script>document.getElementById('run').onclick=function(){
-var result=document.getElementById('result');result.textContent='Running...';
-window.mcp.tools.call('evaluate_js',{script:'1 + 2',allowUnsafeEval:true})
-.then(function(value){result.textContent=JSON.stringify(value,null,2);},
-function(error){result.textContent='Error: '+error.message;});};</script>
-</body></html>)HTML";
-    return std::string("data:text/html,") + page;
-}
-#endif
-
 }  // namespace
 
 WEBVIEW_MAIN {
@@ -125,11 +109,6 @@ WEBVIEW_MAIN {
         return 1;
     }
 
-#if defined(WV_IPC_EDGEHTML)
-    const auto pageUrlAscii = edgeHtmlDataUrl();
-    const std::wstring pageUrl(pageUrlAscii.begin(), pageUrlAscii.end());
-    wv::WebView webview{800, 500, true, true, Str("MCP stdio IPC (EdgeHTML)"), pageUrl};
-#else
     const auto page = executable.parent_path() / "index.html";
 #if defined(WEBVIEW_IS_WIN)
     const auto pageUrl = std::wstring(L"file:///") + page.generic_wstring();
@@ -137,7 +116,6 @@ WEBVIEW_MAIN {
 #else
     wv::WebView webview{800, 500, true, true, Str("MCP stdio IPC"),
                         std::string("file://") + page.generic_string()};
-#endif
 #endif
 
     try {
