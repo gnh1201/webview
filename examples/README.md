@@ -76,8 +76,8 @@ With a multi-configuration Visual Studio generator, use
 `out/build/open-file/bin/Debug/open_file.exe` instead.
 
 `ipc-open-file` combines stdio MCP IPC with the `open-file` engine selection.
-It looks beside the executable for `app.js` and `index.html` (or `index.hta` if
-there is no HTML entry point). When a required file is missing, it opens a file
+It looks beside the executable for `app.js` and `index.html`, `index.hta`, or
+`app.hta` in that order. When a required file is missing, it opens a file
 picker. `.hta` documents use MSHTML; HTML documents use WebView2, EdgeHTML, or
 MSHTML according to runtime availability. Both sample entry points are copied
 beside the executable. The HTML sample is selected by default; pass a document

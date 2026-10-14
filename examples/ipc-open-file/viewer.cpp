@@ -122,21 +122,18 @@ std::wstring fileUrl(const std::filesystem::path& file) {
 class HtmlSnapshot {
 public:
     explicit HtmlSnapshot(const std::filesystem::path& source) {
-        wchar_t tempDirectory[MAX_PATH]{};
-        const DWORD directoryLength = GetTempPathW(MAX_PATH, tempDirectory);
-        if (directoryLength == 0 || directoryLength >= MAX_PATH)
-            throw std::runtime_error("could not find the temporary directory");
-
         wchar_t tempName[MAX_PATH]{};
-        if (GetTempFileNameW(tempDirectory, L"wvf", 0, tempName) == 0)
+        const auto directory = source.parent_path();
+        if (GetTempFileNameW(directory.c_str(), L"wvf", 0, tempName) == 0)
             throw std::runtime_error("could not create a temporary HTML file");
 
         path_ = tempName;
-        path_.replace_extension(L".html");
-        DeleteFileW(tempName);
-        try {
-            std::filesystem::copy_file(source, path_);
-        } catch (...) {
+        path_.replace_extension(L".tmp.html");
+        if (!MoveFileW(tempName, path_.c_str())) {
+            DeleteFileW(tempName);
+            throw std::runtime_error("could not prepare a temporary HTML path");
+        }
+        if (!CopyFileW(source.c_str(), path_.c_str(), FALSE)) {
             DeleteFileW(path_.c_str());
             throw std::runtime_error("could not prepare the HTA for MSHTML");
         }

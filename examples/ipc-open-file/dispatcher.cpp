@@ -67,7 +67,7 @@ std::filesystem::path chooseDocument() {
     static constexpr wchar_t filter[] =
         L"HTML and HTA files (*.html;*.htm;*.hta)\0*.html;*.htm;*.hta\0"
         L"All files (*.*)\0*.*\0\0";
-    return chooseFile(L"Locate index.html or index.hta", filter);
+    return chooseFile(L"Locate index.html, index.hta, or app.hta", filter);
 }
 
 bool hasExtension(const std::filesystem::path& path,
@@ -156,8 +156,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (document.empty()) {
         const auto html = directory / L"index.html";
         const auto hta = directory / L"index.hta";
+        const auto appHta = directory / L"app.hta";
         if (std::filesystem::is_regular_file(html)) document = html;
         else if (std::filesystem::is_regular_file(hta)) document = hta;
+        else if (std::filesystem::is_regular_file(appHta)) document = appHta;
         else document = chooseDocument();
     }
     if (document.empty() || !std::filesystem::is_regular_file(document) ||
