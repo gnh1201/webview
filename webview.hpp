@@ -158,6 +158,7 @@ class MshtmlExternalDispatch
       public IInternetSecurityManager {
 public:
     std::function<bool(const std::wstring&)> invoke;
+    std::function<bool(LONG, LONG)> moveWindow;
     bool allowActiveX = false;
     DWORD hostSecurityQueries = 0;
     DWORD securityQueries = 0;
@@ -342,6 +343,7 @@ public:
         if (count != 1) return DISP_E_UNKNOWNNAME;
         if (_wcsicmp(names[0], L"invoke") == 0) ids[0] = 1;
         else if (_wcsicmp(names[0], L"securityDiagnostics") == 0) ids[0] = 2;
+        else if (_wcsicmp(names[0], L"moveTo") == 0) ids[0] = 3;
         else return DISP_E_UNKNOWNNAME;
         return S_OK;
     }
@@ -371,6 +373,21 @@ public:
             result->vt = VT_BSTR;
             result->bstrVal = SysAllocString(diagnostics);
             return result->bstrVal ? S_OK : E_OUTOFMEMORY;
+        }
+        if (id == 3) {
+            if (!params || params->cArgs != 2) return DISP_E_BADPARAMCOUNT;
+            CComVariant x, y;
+            HRESULT hr = VariantChangeType(&x, &params->rgvarg[1], 0, VT_I4);
+            if (SUCCEEDED(hr))
+                hr = VariantChangeType(&y, &params->rgvarg[0], 0, VT_I4);
+            if (FAILED(hr)) return DISP_E_TYPEMISMATCH;
+            const bool moved = moveWindow && moveWindow(x.lVal, y.lVal);
+            if (result) {
+                VariantInit(result);
+                result->vt = VT_BOOL;
+                result->boolVal = moved ? VARIANT_TRUE : VARIANT_FALSE;
+            }
+            return S_OK;
         }
         if (id != 1) return DISP_E_MEMBERNOTFOUND;
         if (!params || params->cArgs != 1) return DISP_E_BADPARAMCOUNT;
@@ -551,6 +568,7 @@ public:
             "window.__wvMcpPending={};window.__wvMcpNext=0;");
 #if defined(WEBVIEW_MSHTML)
         inject += Str(
+            "try{window.moveTo=function(x,y){return window.external.moveTo(x,y);};}catch(e){}"
             "if(!window.JSON){window.JSON={};"
             "window.JSON.stringify=function(v){function q(s){return '\"'+String(s).replace(/[\\\"\\\\\\x00-\\x1f]/g,function(c){"
             "var m={'\\\"':'\\\\\\\"','\\\\':'\\\\\\\\','\\b':'\\\\b','\\f':'\\\\f','\\n':'\\\\n','\\r':'\\\\r','\\t':'\\\\t'};"
@@ -1827,6 +1845,11 @@ int WebView::init() {
         external->AddRef();
         external->allowActiveX = mshtmlActiveXEnabled;
         external->localMachineLockdownResult = localMachineLockdownResult;
+        external->moveWindow = [this](LONG x, LONG y) {
+            return hwnd && IsWindow(hwnd) &&
+                   SetWindowPos(hwnd, nullptr, x, y, 0, 0,
+                                SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE);
+        };
         external->invoke = [this](const std::wstring& value) {
             const bool isMcpCall = value.compare(0, 15, L"__wv_mcp_call__") == 0;
             if (!js_callback && !isMcpCall) return false;
