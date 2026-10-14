@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>open-file HTA sample</title>
+    <hta:application
+      id="openFileSample"
+      applicationname="open-file sample"
+      border="dialog"
+      caption="yes"
+      showintaskbar="yes"
+      singleinstance="no"
+      sysmenu="yes"
+      windowstate="normal"
+    />
+    <style>
+      body { font: 16px Segoe UI, sans-serif; margin: 2rem; }
+      button { padding: 0.5rem 0.8rem; }
+      #result { margin-top: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>HTA file sample</h1>
+    <p>This file should be routed to the MSHTML viewer.</p>
+    <button id="run">Run JavaScript</button>
+    <p id="result">Waiting for a button click.</p>
+    <script>
+      document.getElementById('run').onclick = function () {
+        document.getElementById('result').innerText =
+          'The .hta file opened through the MSHTML backend.';
+      };
+    </script>
+  </body>
+</html>

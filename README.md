@@ -39,12 +39,13 @@ Examples are in [`examples/`](examples/):
 - `mshtml` demonstrates the legacy MSHTML backend, local content, and a JavaScript-to-native callback.
 - `ipc` demonstrates callback-based `window.mcp.tools.call('evaluate_js', params, callback)` over stdio JSON-RPC; the same example works with Promise-based engines.
 - `ipc-mshtml` and `ipc-edgehtml` run MCP IPC on the legacy Windows engines; MSHTML uses a callback because it has no native Promise support.
+- `open-file` is a Windows example that routes `.hta` files to MSHTML and `.html` files to WebView2, EdgeHTML, or MSHTML according to runtime availability.
 
 The local-only setting applies to document navigation, not to resources referenced by the page. Do not treat it as a network sandbox for untrusted HTML.
 
 ## TODO
 
-- Add compatibility for the HTA (`.hta`) file format. HTA (HTML Application) files are HTML-based Windows applications, traditionally hosted by `mshta.exe`, and can include an `<HTA:APPLICATION>` element to configure application-window behavior such as its border. Compatibility should account for these application-specific semantics, rather than only opening the file as an ordinary HTML page. HTA content has different security assumptions from normal browser content, so this work must also define and document its security behavior. See Microsoft's documentation for the [`HTA:APPLICATION` element](https://learn.microsoft.com/en-us/previous-versions/ms536476%28v%3Dvs.85%29) and [HTA security model](https://learn.microsoft.com/en-us/openspecs/ie_standards/ms-html401e/1cc72255-6605-4e5a-b401-37da1c365a56).
+- Complete HTA (`.hta`) compatibility semantics. The `open-file` example routes `.hta` files to MSHTML, but does not reproduce standalone `mshta.exe` window and privilege behavior. HTA content has different security assumptions from normal browser content, so document that behavior before treating it as a full HTA host. See Microsoft's documentation for the [`HTA:APPLICATION` element](https://learn.microsoft.com/en-us/previous-versions/ms536476%28v%3Dvs.85%29) and [HTA security model](https://learn.microsoft.com/en-us/openspecs/ie_standards/ms-html401e/1cc72255-6605-4e5a-b401-37da1c365a56).
 
 ## Usage
 

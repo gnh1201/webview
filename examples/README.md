@@ -44,6 +44,37 @@ cmake -S examples/ipc-edgehtml -B out/build/ipc-edgehtml
 cmake --build out/build/ipc-edgehtml --config Debug
 ```
 
+`open-file` accepts an `.hta`, `.htm`, or `.html` path. It builds a small
+dispatcher and one viewer for each Windows backend. HTA files go to MSHTML;
+HTML files use WebView2 when its runtime is available, then EdgeHTML when its
+WinRT process API initializes, and otherwise MSHTML. This builds all three
+engine backends, so the Visual Studio C++
+toolchain must include ATL for the MSHTML viewer. Configure and build all four
+executables together (use a Visual Studio developer prompt so the C++ compiler
+is available):
+
+```powershell
+cmake -S examples/open-file -B out/build/open-file -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build out/build/open-file --config Debug
+.\out\build\open-file\bin\open_file.exe "C:\path\to\page.html"
+```
+
+With a multi-configuration Visual Studio generator, the dispatcher is under
+`bin/Debug` instead. Use `-A x64` when configuring with a Visual Studio
+generator.
+
+The EdgeHTML viewer reads HTML and loads it with `NavigateToString`, so
+relative resources in the file are not resolved from the original directory.
+Try the included samples from the repository root:
+
+```powershell
+.\out\build\open-file\bin\open_file.exe .\examples\open-file\samples\sample.html
+.\out\build\open-file\bin\open_file.exe .\examples\open-file\samples\sample.hta
+```
+
+With a multi-configuration Visual Studio generator, use
+`out/build/open-file/bin/Debug/open_file.exe` instead.
+
 ```sh
 mkdir build
 cd build

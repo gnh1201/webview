@@ -1,0 +1,136 @@
+#include <algorithm>
+#include <cwctype>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "webview.hpp"
+#include <shellapi.h>
+#include <shlwapi.h>
+
+namespace {
+
+std::filesystem::path inputFile() {
+    int count = 0;
+    LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (!arguments) throw std::runtime_error("could not read the command line");
+    std::filesystem::path file;
+    if (count >= 2) file = std::filesystem::absolute(arguments[1]);
+    LocalFree(arguments);
+    if (file.empty() || !std::filesystem::is_regular_file(file))
+        throw std::runtime_error("the specified HTML file does not exist");
+    return file;
+}
+
+#if defined(WEBVIEW_WIN)
+std::wstring loadHtml(const std::filesystem::path& file) {
+    std::ifstream input(file, std::ios::binary);
+    if (!input) throw std::runtime_error("could not read the HTML file");
+    const std::string utf8((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+    const int length = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(),
+        static_cast<int>(utf8.size()), nullptr, 0);
+    if (length <= 0) throw std::runtime_error("HTML file is not valid UTF-8");
+    std::wstring html(static_cast<size_t>(length), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(),
+                            static_cast<int>(utf8.size()), html.data(),
+                            length) != length)
+        throw std::runtime_error("could not decode the HTML file");
+    return L"data:text/html," + html;
+}
+#else
+std::wstring fileUrl(const std::filesystem::path& file) {
+    DWORD length = 32768;
+    std::vector<wchar_t> url(length);
+    const HRESULT result = UrlCreateFromPathW(file.c_str(), url.data(), &length, 0);
+    if (FAILED(result)) throw std::runtime_error("could not create a file URL");
+    return std::wstring(url.data());
+}
+
+class HtmlSnapshot {
+public:
+    explicit HtmlSnapshot(const std::filesystem::path& source) {
+        wchar_t tempDirectory[MAX_PATH]{};
+        const DWORD directoryLength = GetTempPathW(MAX_PATH, tempDirectory);
+        if (directoryLength == 0 || directoryLength >= MAX_PATH)
+            throw std::runtime_error("could not find the temporary directory");
+
+        wchar_t tempName[MAX_PATH]{};
+        if (GetTempFileNameW(tempDirectory, L"wvf", 0, tempName) == 0)
+            throw std::runtime_error("could not create a temporary HTML file");
+
+        path_ = tempName;
+        path_.replace_extension(L".html");
+        DeleteFileW(tempName);
+        try {
+            std::filesystem::copy_file(source, path_);
+        } catch (...) {
+            DeleteFileW(path_.c_str());
+            throw std::runtime_error("could not prepare the HTA for MSHTML");
+        }
+    }
+
+    ~HtmlSnapshot() { DeleteFileW(path_.c_str()); }
+    const std::filesystem::path& path() const { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
+#endif
+
+}  // namespace
+
+WEBVIEW_MAIN {
+    try {
+        const auto file = inputFile();
+#if defined(WEBVIEW_WIN)
+        const auto url = loadHtml(file);
+        wv::WebView webview{1000, 720, true, true,
+                            Str("Open HTML (EdgeHTML)"), url};
+#elif defined(WEBVIEW_MSHTML)
+        // URLMON treats .hta URLs as downloadable applications. Give MSHTML
+        // an .html copy so it renders the markup inside the view instead.
+        std::unique_ptr<HtmlSnapshot> snapshot;
+        const auto mshtmlFile = [&]() -> const std::filesystem::path& {
+            std::wstring extension = file.extension().wstring();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                           [](wchar_t ch) {
+                               return static_cast<wchar_t>(towlower(ch));
+                           });
+            if (extension == L".hta") {
+                snapshot = std::make_unique<HtmlSnapshot>(file);
+                return snapshot->path();
+            }
+            return file;
+        }();
+        const auto url = fileUrl(mshtmlFile);
+        wv::WebView webview{1000, 720, true, true,
+                            Str("Open file (MSHTML)"), url};
+#else
+        const auto url = fileUrl(file);
+        wv::WebView webview{1000, 720, true, true,
+                            Str("Open HTML (WebView2)"), url};
+#endif
+        if (webview.init() == -1) return 1;
+        while (webview.run() == 0) {}
+        return 0;
+    } catch (const std::exception& error) {
+        const std::string errorText(error.what());
+        const int length = MultiByteToWideChar(CP_UTF8, 0, errorText.c_str(), -1,
+                                              nullptr, 0);
+        std::wstring message(length > 0 ? static_cast<size_t>(length) : 0,
+                             L'\0');
+        if (length > 0) {
+            MultiByteToWideChar(CP_UTF8, 0, errorText.c_str(), -1,
+                                message.data(), length);
+            message.resize(static_cast<size_t>(length - 1));
+        }
+        MessageBoxW(nullptr, message.c_str(), L"Open file", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+}
