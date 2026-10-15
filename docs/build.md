@@ -11,6 +11,15 @@
 
 If you have CMake installed, the included config should work for all platforms.
 
+## HTML parser dependency
+
+The public `webview.hpp` header uses the Gumbo HTML parser to read document
+titles. CMake fetches the pinned Gumbo revision from
+[Codeberg](https://codeberg.org/gumbo-parser/gumbo-parser) and builds it as a
+static library. The first configure therefore needs network access to
+Codeberg. Manual builds must also compile Gumbo's C sources and link them with
+the application.
+
 ## EdgeHTML (Edge Legacy)
 
 _Note: It's highly recommended to choose the new Chromium-based Edge over the EdgeHTML-based Edge Legacy._

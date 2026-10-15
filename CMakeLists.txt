@@ -36,6 +36,8 @@ include(cmake/StaticAnalyzers.cmake)
 include(cmake/NuGet.cmake)
 
 add_library(${PROJECT_NAME} INTERFACE)
+include(cmake/Gumbo.cmake)
+target_link_libraries(${PROJECT_NAME} INTERFACE webview_gumbo)
 
 # The public WebView header includes the MCP stdio client, which uses nlohmann/json.
 find_package(nlohmann_json 3.12.0 QUIET)

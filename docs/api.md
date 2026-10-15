@@ -8,6 +8,7 @@
   - [webview.init](#init)
   - [webview.setCallback](#setcallback)
   - [webview.setTitle](#settitle)
+  - [HTML title handling](#html-title-handling)
   - [webview.setFullscreen](#setfullscreen)
   - [webview.setFullscreenFromJS](#setfullscreenfromjs)
   - [webview.setBgColor](#setbgcolor)
@@ -185,6 +186,15 @@ Sets the title of the webview window.
 #### Params
 
 - title: The new title of the webview
+
+### HTML title handling
+
+WebView automatically reads `<title>` elements with Gumbo and updates the
+native window title on every backend. It monitors the loaded document's
+`<head>`, so title changes after navigation are reflected too. On Windows,
+local HTML files are also parsed natively when navigating to them. This covers
+MSHTML's temporary `.tmp.html` copy used to display HTA files, even when page
+scripts do not run.
 
 ### `setFullscreen`
 

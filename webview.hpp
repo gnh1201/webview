@@ -27,9 +27,10 @@
 #include <functional>
 #include <cwchar>
 #include <filesystem>
-#include <iterator>
 #include <string>
 #include <vector>
+
+#include <gumbo.h>
 
 #include "ipc.hpp"
 
@@ -609,6 +610,12 @@ public:
             "if(typeof cb==='function')promise.then(function(r){cb(null,r);},function(e){cb(e,null);});"
             "return promise;};}");
 #endif
+        inject += Str(
+            "if(!window.__wvTitleScanInstalled){window.__wvTitleScanInstalled=true;"
+            "(function(){var last='';function scan(){var h=document.getElementsByTagName('head')[0];"
+            "if(!h)return;var m='<html><head>'+h.innerHTML+'</head></html>';"
+            "if(m===last)return;last=m;window.external.invoke('__wv_html_title__'+"
+            "encodeURIComponent(m));}scan();window.setInterval(scan,250);})();}");
     }
     ~WebView() {
         init_done = false;
@@ -685,6 +692,10 @@ public:
 private:
     void showForbiddenPage();
     bool handleMcpMessage(const String& message);
+    static std::string htmlTitleFromMarkup(const std::string& html);
+#if defined(WEBVIEW_IS_WIN)
+    void updateTitleFromLocalFile(const std::wstring& uri);
+#endif
     static String fromUtf8(const std::string& value);
     static std::string percentDecode(const std::string& value);
     detail::StdioMcpClient mcpClient;
@@ -1372,6 +1383,7 @@ void WebView::navigate(std::wstring u) {
         constexpr auto len = std::wstring_view(prefix).size();
         webview.NavigateToString(u.substr(len));
     } else {
+        updateTitleFromLocalFile(u);
         Uri uri{u};
         webview.Navigate(uri);
     }
@@ -1741,6 +1753,7 @@ void WebView::navigate(std::wstring u) {
     } else if (localFileOnly && !isAllowedLocalDocument(u.c_str())) {
         showForbiddenPage();
     } else {
+        updateTitleFromLocalFile(u);
         if (localNotFoundPage && u == url)
             webviewWindow->NavigateToString(
                 L"<title>Not Found</title><h1>Not Found</h1>");
@@ -1852,7 +1865,9 @@ int WebView::init() {
         };
         external->invoke = [this](const std::wstring& value) {
             const bool isMcpCall = value.compare(0, 15, L"__wv_mcp_call__") == 0;
-            if (!js_callback && !isMcpCall) return false;
+            constexpr wchar_t titlePrefix[] = L"__wv_html_title__";
+            const bool isTitleUpdate = value.rfind(titlePrefix, 0) == 0;
+            if (!js_callback && !isMcpCall && !isTitleUpdate) return false;
             try {
                 mshtmlPendingCallbacks.push_back(value);
             } catch (...) {
@@ -1973,6 +1988,7 @@ void WebView::navigate(std::wstring u) {
         showForbiddenPage();
         return;
     }
+    updateTitleFromLocalFile(u);
     if (localNotFoundPage && u == url) {
         CComPtr<IDispatch> dispatch;
         CComPtr<IHTMLDocument2> document;
@@ -2499,6 +2515,78 @@ wv::String WebView::fromUtf8(const std::string& value) {
 #endif
 }
 
+std::string WebView::htmlTitleFromMarkup(const std::string& html) {
+    if (html.empty()) return {};
+
+    GumboOutput* parsed = gumbo_parse_with_options(
+        &kGumboDefaultOptions, html.data(), html.size());
+    if (!parsed) return {};
+
+    std::string title;
+    auto appendText = [&](auto&& self, const GumboNode* node,
+                          std::string& text) -> void {
+        if (node->type == GUMBO_NODE_TEXT || node->type == GUMBO_NODE_WHITESPACE ||
+            node->type == GUMBO_NODE_CDATA) {
+            text += node->v.text.text;
+            return;
+        }
+        if (node->type == GUMBO_NODE_DOCUMENT) {
+            const GumboVector& children = node->v.document.children;
+            for (unsigned int i = 0; i < children.length; ++i)
+                self(self, static_cast<const GumboNode*>(children.data[i]), text);
+            return;
+        }
+        if (node->type != GUMBO_NODE_ELEMENT && node->type != GUMBO_NODE_TEMPLATE)
+            return;
+        const GumboVector& children = node->v.element.children;
+        for (unsigned int i = 0; i < children.length; ++i)
+            self(self, static_cast<const GumboNode*>(children.data[i]), text);
+    };
+    auto findTitle = [&](auto&& self, const GumboNode* node) -> void {
+        if (!title.empty()) return;
+        if (node->type == GUMBO_NODE_DOCUMENT) {
+            const GumboVector& children = node->v.document.children;
+            for (unsigned int i = 0; i < children.length && title.empty(); ++i)
+                self(self, static_cast<const GumboNode*>(children.data[i]));
+            return;
+        }
+        if (node->type != GUMBO_NODE_ELEMENT && node->type != GUMBO_NODE_TEMPLATE)
+            return;
+        if (node->type == GUMBO_NODE_ELEMENT &&
+            node->v.element.tag == GUMBO_TAG_TITLE) {
+            appendText(appendText, node, title);
+            return;
+        }
+        const GumboVector& children = node->v.element.children;
+        for (unsigned int i = 0; i < children.length && title.empty(); ++i)
+            self(self, static_cast<const GumboNode*>(children.data[i]));
+    };
+
+    findTitle(findTitle, parsed->root);
+    gumbo_destroy_output(&kGumboDefaultOptions, parsed);
+    const auto first = title.find_first_not_of(" \t\r\n\f");
+    if (first == std::string::npos) return {};
+    const auto last = title.find_last_not_of(" \t\r\n\f");
+    return title.substr(first, last - first + 1);
+}
+
+#if defined(WEBVIEW_IS_WIN)
+void WebView::updateTitleFromLocalFile(const std::wstring& uri) {
+    std::wstring path(32768, L'\0');
+    DWORD pathLength = static_cast<DWORD>(path.size());
+    if (FAILED(PathCreateFromUrlW(uri.c_str(), path.data(), &pathLength, 0)))
+        return;
+    path.resize(wcslen(path.c_str()));
+
+    std::ifstream input(std::filesystem::path(path), std::ios::binary);
+    if (!input) return;
+    const std::string html((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+    const auto pageTitle = htmlTitleFromMarkup(html);
+    if (!pageTitle.empty()) setTitle(fromUtf8(pageTitle));
+}
+#endif
+
 std::string WebView::percentDecode(const std::string& value) {
     auto hexValue = [](char c) -> int {
         if (c >= '0' && c <= '9') return c - '0';
@@ -2520,6 +2608,21 @@ std::string WebView::percentDecode(const std::string& value) {
 }
 
 bool WebView::handleMcpMessage(const wv::String& message) {
+    const wv::String titlePrefix = Str("__wv_html_title__");
+    if (message.compare(0, titlePrefix.size(), titlePrefix) == 0) {
+        try {
+            std::string encoded;
+            for (const auto c : message.substr(titlePrefix.size())) {
+                if (c > 0x7f) return true;
+                encoded += static_cast<char>(c);
+            }
+            const auto pageTitle = htmlTitleFromMarkup(percentDecode(encoded));
+            if (!pageTitle.empty()) setTitle(fromUtf8(pageTitle));
+        } catch (...) {
+            // Invalid or incomplete markup leaves the current window title.
+        }
+        return true;
+    }
     const wv::String prefix = Str("__wv_mcp_call__");
     if (message.compare(0, prefix.size(), prefix) != 0) return false;
     const auto body = message.substr(prefix.size());

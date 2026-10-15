@@ -49,9 +49,10 @@ dispatcher and one viewer for each Windows backend. HTA files go to MSHTML;
 HTML files use WebView2 when its runtime is available, then EdgeHTML when its
 WinRT process API initializes, and otherwise MSHTML. This builds all three
 engine backends, so the Visual Studio C++
-toolchain must include ATL for the MSHTML viewer. Configure and build all four
-executables together (use a Visual Studio developer prompt so the C++ compiler
-is available):
+toolchain must include ATL for the MSHTML viewer. The WebView core reads each
+page's `<title>` with Gumbo and updates the window title; the viewers do not
+parse titles themselves. Configure and build all four executables together
+(use a Visual Studio developer prompt so the C++ compiler is available):
 
 ```powershell
 cmake -S examples/open-file -B out/build/open-file -G Ninja -DCMAKE_BUILD_TYPE=Debug
@@ -94,7 +95,8 @@ With a multi-configuration Visual Studio generator, run
 `out/build/ipc-open-file/bin/Debug/ipc_open_file.exe`. Its button calls
 `evaluate_js` with `allowUnsafeEval: true`; adjust the `cscript.exe` selection in
 the viewer if the WelsonJS installation requires a different Windows Script
-Host architecture. Relative filesystem paths in HTA documents resolve from
+Host architecture. HTML and HTA titles are handled by the common WebView
+title parser. Relative filesystem paths in HTA documents resolve from
 the document directory. The MSHTML host allows ActiveX execution and scripting,
 including `ADODB.Stream`. This policy applies to all documents rendered by the
 MSHTML backend. The MSHTML backend requires ATL.
