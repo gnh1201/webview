@@ -44,7 +44,8 @@ Examples are in [`examples/`](examples/):
 - `open-file` is a Windows example that routes `.hta` files to MSHTML and `.html` files to WebView2, EdgeHTML, or MSHTML according to runtime availability.
 
 WebView handles HTML `<title>` elements as a common feature. It parses the
-document head with Gumbo and updates the native window title across backends;
+document head with [Gumbo](https://codeberg.org/gumbo-parser/gumbo-parser) and
+updates the native window title across backends;
 Windows local files are also parsed before navigation, including the temporary
 HTML copy used for HTA files.
 
