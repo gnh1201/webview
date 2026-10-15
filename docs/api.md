@@ -189,12 +189,13 @@ Sets the title of the webview window.
 
 ### HTML title handling
 
-WebView automatically reads `<title>` elements with Gumbo and updates the
-native window title on every backend. It monitors the loaded document's
-`<head>`, so title changes after navigation are reflected too. On Windows,
-local HTML files are also parsed natively when navigating to them. This covers
-MSHTML's temporary `.tmp.html` copy used to display HTA files, even when page
-scripts do not run.
+WebView automatically reads `<title>` and `<link rel="icon">` elements with
+Gumbo. It updates the native window title and icon on every backend and
+monitors the loaded document's `<head>`, so metadata changes after navigation
+are reflected too. On Windows, local HTML files are also parsed natively when
+navigating to them. This covers MSHTML's temporary `.tmp.html` copy used to
+display HTA files, even when page scripts do not run. Relative icon URLs are
+resolved against the document URL.
 
 ### `setFullscreen`
 

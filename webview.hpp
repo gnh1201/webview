@@ -25,9 +25,11 @@
 
 // Headers
 #include <functional>
+#include <cctype>
 #include <cwchar>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gumbo.h>
@@ -44,11 +46,14 @@
 #include <objsafe.h>
 #include <shellscalingapi.h>
 #include <urlmon.h>
+#include <gdiplus.h>
 #include <atlbase.h>
 #include <atlcom.h>
 #include <atlhost.h>
 #include <shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "urlmon.lib")
 namespace wv::detail {
 class AtlHostingModule final : public ATL::CAtlModule {
 public:
@@ -420,10 +425,14 @@ private:
 #define WIN32_LEAN_AND_MEAN
 #pragma comment(lib, "windowsapp")
 #pragma comment(lib, "Shlwapi.lib")
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "urlmon.lib")
 
 #include <objbase.h>
 #include <shellscalingapi.h>
 #include <shlwapi.h>
+#include <urlmon.h>
+#include <gdiplus.h>
 #include <windows.h>
 #include <winrt/Windows.Web.UI.Interop.h>
 
@@ -441,12 +450,16 @@ private:
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "urlmon.lib")
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <unknwn.h>
 #include <WebView2.h>
 #include <shellscalingapi.h>
 #include <shlwapi.h>
+#include <urlmon.h>
+#include <gdiplus.h>
 #include <tchar.h>
 #include <wil/com.h>
 #include <wrl.h>
@@ -613,9 +626,13 @@ public:
         inject += Str(
             "if(!window.__wvTitleScanInstalled){window.__wvTitleScanInstalled=true;"
             "(function(){var last='';function scan(){var h=document.getElementsByTagName('head')[0];"
-            "if(!h)return;var m='<html><head>'+h.innerHTML+'</head></html>';"
-            "if(m===last)return;last=m;window.external.invoke('__wv_html_title__'+"
-            "encodeURIComponent(m));}scan();window.setInterval(scan,250);})();}");
+            "if(window!==window.top||!h)return;"
+            "var m='<html><head>'+h.innerHTML+'</head></html>';"
+            "var b=document.getElementsByTagName('base')[0];"
+            "var u=b&&b.href?b.href:document.location.href,k=m+'|'+u;"
+            "if(k===last)return;last=k;window.external.invoke('__wv_html_metadata__'+"
+            "encodeURIComponent(m)+'|'+encodeURIComponent(u));}"
+            "scan();window.setInterval(scan,250);})();}");
     }
     ~WebView() {
         init_done = false;
@@ -657,11 +674,16 @@ public:
 #endif
 #if defined(WEBVIEW_IS_WIN)
         if (hwnd && IsWindow(hwnd)) DestroyWindow(hwnd);
+        if (windowIcon) {
+            DestroyIcon(windowIcon);
+            windowIcon = nullptr;
+        }
 #endif
     }
     int init();                            // Initialize webview
     void setCallback(jscb callback);       // JS callback
     void setTitle(String t);               // Set title of window
+    void setWindowIcon(const String& url);
     void setFullscreen(bool fs);           // Set fullscreen
     void setFullscreenFromJS(bool allow);  // Allow setting fullscreen from JS
     void setBgColor(uint8_t r, uint8_t g, uint8_t b,
@@ -692,7 +714,10 @@ public:
 private:
     void showForbiddenPage();
     bool handleMcpMessage(const String& message);
-    static std::string htmlTitleFromMarkup(const std::string& html);
+    static std::pair<std::string, std::string> htmlMetadataFromMarkup(
+        const std::string& html);
+    static String resolveIconUrl(const String& base,
+                                 const std::string& href);
 #if defined(WEBVIEW_IS_WIN)
     void updateTitleFromLocalFile(const std::wstring& uri);
 #endif
@@ -722,6 +747,7 @@ private:
     MSG msg{};  // Message from main loop
     bool isFullscreen = false;
     UINT dpi = USER_DEFAULT_SCREEN_DPI;
+    HICON windowIcon = nullptr;
 
     struct WindowInfo {
         LONG_PTR style;    // GWL_STYLE
@@ -1865,9 +1891,9 @@ int WebView::init() {
         };
         external->invoke = [this](const std::wstring& value) {
             const bool isMcpCall = value.compare(0, 15, L"__wv_mcp_call__") == 0;
-            constexpr wchar_t titlePrefix[] = L"__wv_html_title__";
-            const bool isTitleUpdate = value.rfind(titlePrefix, 0) == 0;
-            if (!js_callback && !isMcpCall && !isTitleUpdate) return false;
+            constexpr wchar_t metadataPrefix[] = L"__wv_html_metadata__";
+            const bool isMetadataUpdate = value.rfind(metadataPrefix, 0) == 0;
+            if (!js_callback && !isMcpCall && !isMetadataUpdate) return false;
             try {
                 mshtmlPendingCallbacks.push_back(value);
             } catch (...) {
@@ -2515,14 +2541,15 @@ wv::String WebView::fromUtf8(const std::string& value) {
 #endif
 }
 
-std::string WebView::htmlTitleFromMarkup(const std::string& html) {
+std::pair<std::string, std::string> WebView::htmlMetadataFromMarkup(
+    const std::string& html) {
     if (html.empty()) return {};
 
     GumboOutput* parsed = gumbo_parse_with_options(
         &kGumboDefaultOptions, html.data(), html.size());
     if (!parsed) return {};
 
-    std::string title;
+    std::pair<std::string, std::string> metadata;
     auto appendText = [&](auto&& self, const GumboNode* node,
                           std::string& text) -> void {
         if (node->type == GUMBO_NODE_TEXT || node->type == GUMBO_NODE_WHITESPACE ||
@@ -2542,32 +2569,70 @@ std::string WebView::htmlTitleFromMarkup(const std::string& html) {
         for (unsigned int i = 0; i < children.length; ++i)
             self(self, static_cast<const GumboNode*>(children.data[i]), text);
     };
-    auto findTitle = [&](auto&& self, const GumboNode* node) -> void {
-        if (!title.empty()) return;
+    auto isIconRelation = [](const char* rel) {
+        if (!rel) return false;
+        std::string value(rel);
+        size_t start = 0;
+        while (start < value.size()) {
+            while (start < value.size() &&
+                   std::isspace(static_cast<unsigned char>(value[start])))
+                ++start;
+            const size_t end = value.find_first_of(" \t\r\n\f", start);
+            const size_t tokenEnd = end == std::string::npos ? value.size() : end;
+            if (tokenEnd - start == 4) {
+                const char* icon = "icon";
+                bool matches = true;
+                for (size_t i = 0; i < 4; ++i) {
+                    if (std::tolower(static_cast<unsigned char>(value[start + i])) !=
+                        icon[i]) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (matches) return true;
+            }
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        return false;
+    };
+    auto findMetadata = [&](auto&& self, const GumboNode* node) -> void {
         if (node->type == GUMBO_NODE_DOCUMENT) {
             const GumboVector& children = node->v.document.children;
-            for (unsigned int i = 0; i < children.length && title.empty(); ++i)
+            for (unsigned int i = 0; i < children.length; ++i)
                 self(self, static_cast<const GumboNode*>(children.data[i]));
             return;
         }
         if (node->type != GUMBO_NODE_ELEMENT && node->type != GUMBO_NODE_TEMPLATE)
             return;
-        if (node->type == GUMBO_NODE_ELEMENT &&
-            node->v.element.tag == GUMBO_TAG_TITLE) {
-            appendText(appendText, node, title);
-            return;
+        const GumboElement& element = node->v.element;
+        if (node->type == GUMBO_NODE_ELEMENT && element.tag == GUMBO_TAG_TITLE &&
+            metadata.first.empty()) {
+            appendText(appendText, node, metadata.first);
+        } else if (node->type == GUMBO_NODE_ELEMENT &&
+                   element.tag == GUMBO_TAG_LINK && metadata.second.empty()) {
+            const GumboAttribute* rel =
+                gumbo_get_attribute(&element.attributes, "rel");
+            const GumboAttribute* href =
+                gumbo_get_attribute(&element.attributes, "href");
+            if (rel && href && href->value && isIconRelation(rel->value))
+                metadata.second = href->value;
         }
-        const GumboVector& children = node->v.element.children;
-        for (unsigned int i = 0; i < children.length && title.empty(); ++i)
+        const GumboVector& children = element.children;
+        for (unsigned int i = 0; i < children.length; ++i)
             self(self, static_cast<const GumboNode*>(children.data[i]));
     };
 
-    findTitle(findTitle, parsed->root);
+    findMetadata(findMetadata, parsed->root);
     gumbo_destroy_output(&kGumboDefaultOptions, parsed);
-    const auto first = title.find_first_not_of(" \t\r\n\f");
-    if (first == std::string::npos) return {};
-    const auto last = title.find_last_not_of(" \t\r\n\f");
-    return title.substr(first, last - first + 1);
+    const auto first = metadata.first.find_first_not_of(" \t\r\n\f");
+    if (first != std::string::npos) {
+        const auto last = metadata.first.find_last_not_of(" \t\r\n\f");
+        metadata.first = metadata.first.substr(first, last - first + 1);
+    } else {
+        metadata.first.clear();
+    }
+    return metadata;
 }
 
 #if defined(WEBVIEW_IS_WIN)
@@ -2582,10 +2647,108 @@ void WebView::updateTitleFromLocalFile(const std::wstring& uri) {
     if (!input) return;
     const std::string html((std::istreambuf_iterator<char>(input)),
                            std::istreambuf_iterator<char>());
-    const auto pageTitle = htmlTitleFromMarkup(html);
-    if (!pageTitle.empty()) setTitle(fromUtf8(pageTitle));
+    const auto metadata = htmlMetadataFromMarkup(html);
+    if (!metadata.first.empty()) setTitle(fromUtf8(metadata.first));
+    if (!metadata.second.empty()) {
+        const auto iconUrl = resolveIconUrl(uri, metadata.second);
+        if (!iconUrl.empty()) setWindowIcon(iconUrl);
+    }
 }
 #endif
+
+wv::String WebView::resolveIconUrl(const wv::String& base,
+                                   const std::string& href) {
+    if (base.empty() || href.empty()) return {};
+#if defined(WEBVIEW_IS_WIN)
+    const std::wstring wideBase = base;
+    const std::wstring wideHref = fromUtf8(href);
+    std::wstring combined(32768, L'\0');
+    DWORD length = static_cast<DWORD>(combined.size());
+    if (FAILED(UrlCombineW(wideBase.c_str(), wideHref.c_str(), combined.data(),
+                           &length, 0)))
+        return {};
+    combined.resize(wcslen(combined.c_str()));
+    return combined;
+#elif defined(WEBVIEW_MAC)
+    NSString* baseString = [NSString stringWithUTF8String:base.c_str()];
+    NSString* hrefString = [NSString stringWithUTF8String:href.c_str()];
+    NSURL* baseURL = baseString ? [NSURL URLWithString:baseString] : nil;
+    NSURL* resolved = hrefString ? [NSURL URLWithString:hrefString
+                                          relativeToURL:baseURL] : nil;
+    NSString* absolute = [resolved absoluteURL].absoluteString;
+    return absolute ? std::string([absolute UTF8String]) : std::string();
+#else
+    GError* error = nullptr;
+    gchar* resolved = g_uri_resolve_relative(base.c_str(), href.c_str(),
+                                             G_URI_FLAGS_NONE, &error);
+    if (error) g_error_free(error);
+    if (!resolved) return {};
+    std::string result(resolved);
+    g_free(resolved);
+    return result;
+#endif
+}
+
+void WebView::setWindowIcon(const wv::String& iconUrl) {
+#if defined(WEBVIEW_IS_WIN)
+    if (!hwnd || iconUrl.empty()) return;
+    std::wstring path(32768, L'\0');
+    DWORD pathLength = static_cast<DWORD>(path.size());
+    if (FAILED(PathCreateFromUrlW(iconUrl.c_str(), path.data(), &pathLength, 0))) {
+        wchar_t cachePath[MAX_PATH]{};
+        if (FAILED(URLDownloadToCacheFileW(nullptr, iconUrl.c_str(), cachePath,
+                                           MAX_PATH, 0, nullptr)))
+            return;
+        path = cachePath;
+    } else {
+        path.resize(wcslen(path.c_str()));
+    }
+
+    HICON icon = static_cast<HICON>(LoadImageW(
+        nullptr, path.c_str(), IMAGE_ICON, 0, 0,
+        LR_LOADFROMFILE | LR_DEFAULTSIZE));
+    if (!icon) {
+        static ULONG_PTR gdiplusToken = 0;
+        static const bool gdiplusStarted = [] {
+            Gdiplus::GdiplusStartupInput input;
+            return Gdiplus::GdiplusStartup(&gdiplusToken, &input, nullptr) ==
+                   Gdiplus::Ok;
+        }();
+        if (gdiplusStarted) {
+            Gdiplus::Bitmap image(path.c_str());
+            if (image.GetLastStatus() == Gdiplus::Ok)
+                image.GetHICON(&icon);
+        }
+    }
+    if (!icon) return;
+    SendMessage(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+    SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+    if (windowIcon) DestroyIcon(windowIcon);
+    windowIcon = icon;
+#elif defined(WEBVIEW_MAC)
+    NSString* href = [NSString stringWithUTF8String:iconUrl.c_str()];
+    NSURL* url = href ? [NSURL URLWithString:href] : nil;
+    NSImage* image = url ? [[NSImage alloc] initWithContentsOfURL:url] : nil;
+    if (!image) return;
+    [[NSApplication sharedApplication] setApplicationIconImage:image];
+    [image release];
+#elif defined(WEBVIEW_GTK)
+    GError* error = nullptr;
+    GFile* file = g_file_new_for_uri(iconUrl.c_str());
+    GFileInputStream* stream = g_file_read(file, nullptr, &error);
+    if (stream) {
+        GdkPixbuf* image = gdk_pixbuf_new_from_stream(
+            G_INPUT_STREAM(stream), nullptr, &error);
+        if (image) {
+            gtk_window_set_icon(GTK_WINDOW(window), image);
+            g_object_unref(image);
+        }
+        g_object_unref(stream);
+    }
+    if (error) g_error_free(error);
+    g_object_unref(file);
+#endif
+}
 
 std::string WebView::percentDecode(const std::string& value) {
     auto hexValue = [](char c) -> int {
@@ -2608,18 +2771,26 @@ std::string WebView::percentDecode(const std::string& value) {
 }
 
 bool WebView::handleMcpMessage(const wv::String& message) {
-    const wv::String titlePrefix = Str("__wv_html_title__");
-    if (message.compare(0, titlePrefix.size(), titlePrefix) == 0) {
+    const wv::String metadataPrefix = Str("__wv_html_metadata__");
+    if (message.compare(0, metadataPrefix.size(), metadataPrefix) == 0) {
         try {
             std::string encoded;
-            for (const auto c : message.substr(titlePrefix.size())) {
+            for (const auto c : message.substr(metadataPrefix.size())) {
                 if (c > 0x7f) return true;
                 encoded += static_cast<char>(c);
             }
-            const auto pageTitle = htmlTitleFromMarkup(percentDecode(encoded));
-            if (!pageTitle.empty()) setTitle(fromUtf8(pageTitle));
+            const size_t separator = encoded.find('|');
+            if (separator == std::string::npos) return true;
+            const auto markup = percentDecode(encoded.substr(0, separator));
+            const auto base = percentDecode(encoded.substr(separator + 1));
+            const auto metadata = htmlMetadataFromMarkup(markup);
+            if (!metadata.first.empty()) setTitle(fromUtf8(metadata.first));
+            if (!metadata.second.empty()) {
+                const auto iconUrl = resolveIconUrl(fromUtf8(base), metadata.second);
+                if (!iconUrl.empty()) setWindowIcon(iconUrl);
+            }
         } catch (...) {
-            // Invalid or incomplete markup leaves the current window title.
+            // Invalid or incomplete metadata leaves the window unchanged.
         }
         return true;
     }
