@@ -121,4 +121,6 @@ The library supports HTTP(S), local `file:///` URLs, and inline `data:` URLs. Ed
 
 MSHTML compatibility was exercised with an `mshta`-style industrial application scenario, and the application behaved normally during testing:
 
-![MSHTML compatibility test in an mshta-style industrial application](https://catswords.blob.core.windows.net/welsonjs/images/screenshot9.png)
+![MSHTML compatibility test in an mshta-style industrial application, test page](https://catswords.blob.core.windows.net/welsonjs/images/screenshot9.png?utm_source=welsonjs)
+
+![MSHTML compatibility test in an mshta-style industrial application, UI components page](https://catswords.blob.core.windows.net/welsonjs/images/screenshot10.png?utm_source=welsonjs)
