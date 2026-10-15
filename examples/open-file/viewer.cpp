@@ -4,7 +4,6 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
-#include <regex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -25,46 +24,6 @@ std::filesystem::path inputFile() {
     if (file.empty() || !std::filesystem::is_regular_file(file))
         throw std::runtime_error("the specified HTML file does not exist");
     return file;
-}
-
-std::wstring htmlTitle(const std::filesystem::path& file) {
-    std::ifstream input(file, std::ios::binary);
-    if (!input) return {};
-    const std::string bytes((std::istreambuf_iterator<char>(input)),
-                            std::istreambuf_iterator<char>());
-    if (bytes.empty()) return {};
-
-    const int length = MultiByteToWideChar(
-        CP_UTF8, 0, bytes.data(), static_cast<int>(bytes.size()), nullptr, 0);
-    if (length <= 0) return {};
-    std::wstring html(static_cast<size_t>(length), L'\0');
-    if (MultiByteToWideChar(CP_UTF8, 0, bytes.data(),
-                            static_cast<int>(bytes.size()), html.data(),
-                            length) != length)
-        return {};
-
-    static const std::wregex titlePattern(
-        LR"(<title\b[^>]*>([\s\S]*?)</title\s*>)",
-        std::regex_constants::icase);
-    std::wsmatch match;
-    if (!std::regex_search(html, match, titlePattern)) return {};
-
-    std::wstring title = match[1].str();
-    const std::pair<std::wstring, std::wstring> entities[] = {
-        {L"&amp;", L"&"}, {L"&lt;", L"<"}, {L"&gt;", L">"},
-        {L"&quot;", L"\""}, {L"&#39;", L"'"}, {L"&nbsp;", L" "}};
-    for (const auto& entity : entities) {
-        size_t position = 0;
-        while ((position = title.find(entity.first, position)) !=
-               std::wstring::npos) {
-            title.replace(position, entity.first.size(), entity.second);
-            position += entity.second.size();
-        }
-    }
-    const auto first = title.find_first_not_of(L" \t\r\n");
-    if (first == std::wstring::npos) return {};
-    const auto last = title.find_last_not_of(L" \t\r\n");
-    return title.substr(first, last - first + 1);
 }
 
 #if defined(WEBVIEW_WIN)
@@ -126,13 +85,9 @@ private:
 WEBVIEW_MAIN {
     try {
         const auto file = inputFile();
-        const auto pageTitle = htmlTitle(file);
 #if defined(WEBVIEW_WIN)
         const auto url = loadHtml(file);
-        wv::WebView webview{1000, 720, true, true,
-                            pageTitle.empty() ? Str("Open HTML (EdgeHTML)")
-                                              : pageTitle,
-                            url};
+        wv::WebView webview{1000, 720, true, true, Str("Open HTML (EdgeHTML)"), url};
 #elif defined(WEBVIEW_MSHTML)
         // URLMON treats .hta URLs as downloadable applications. Give MSHTML
         // an .html copy so it renders the markup inside the view instead.
@@ -150,16 +105,10 @@ WEBVIEW_MAIN {
             return file;
         }();
         const auto url = fileUrl(mshtmlFile);
-        wv::WebView webview{1000, 720, true, true,
-                            pageTitle.empty() ? Str("Open file (MSHTML)")
-                                              : pageTitle,
-                            url};
+        wv::WebView webview{1000, 720, true, true, Str("Open file (MSHTML)"), url};
 #else
         const auto url = fileUrl(file);
-        wv::WebView webview{1000, 720, true, true,
-                            pageTitle.empty() ? Str("Open HTML (WebView2)")
-                                              : pageTitle,
-                            url};
+        wv::WebView webview{1000, 720, true, true, Str("Open HTML (WebView2)"), url};
 #endif
         if (webview.init() == -1) return 1;
         while (webview.run() == 0) {}

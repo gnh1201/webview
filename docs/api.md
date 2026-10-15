@@ -8,6 +8,7 @@
   - [webview.init](#init)
   - [webview.setCallback](#setcallback)
   - [webview.setTitle](#settitle)
+  - [HTML title handling](#html-title-handling)
   - [webview.setFullscreen](#setfullscreen)
   - [webview.setFullscreenFromJS](#setfullscreenfromjs)
   - [webview.setBgColor](#setbgcolor)
@@ -179,6 +180,13 @@ w.setCallback(callback);
 ```c++
 void setTitle(string title);
 ```
+
+### HTML title handling
+
+The WebView monitors the loaded document's `<head>` and parses it with
+Gumbo. When the document contains a `<title>`, the native window title is
+updated automatically on every backend. Applications do not need to parse
+HTML or call an example-specific helper.
 
 Sets the title of the webview window.
 
