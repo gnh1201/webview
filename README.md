@@ -43,9 +43,10 @@ Examples are in [`examples/`](examples/):
 - `ipc-mshtml` and `ipc-edgehtml` run MCP IPC on the legacy Windows engines; MSHTML uses a callback because it has no native Promise support.
 - `open-file` is a Windows example that routes `.hta` files to MSHTML and `.html` files to WebView2, EdgeHTML, or MSHTML according to runtime availability.
 
-WebView handles HTML `<title>` elements as a common feature. It parses the
-document head with [Gumbo](https://codeberg.org/gumbo-parser/gumbo-parser) and
-updates the native window title across backends;
+WebView handles HTML `<title>` and `<link rel="icon">` elements as common
+features. It parses the document head with
+[Gumbo](https://codeberg.org/gumbo-parser/gumbo-parser) and updates the native
+window title and icon across backends;
 Windows local files are also parsed before navigation, including the temporary
 HTML copy used for HTA files.
 
