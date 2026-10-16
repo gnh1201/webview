@@ -25,9 +25,10 @@ if(WIN32)
 	option(WEBVIEW_USE_MSHTML "Enables the legacy MSHTML engine for Windows" OFF)
 endif()
 
-# ChakraCore is an optional host-side scripting runtime. Its upstream Windows
-# build is still provided as a Visual Studio solution, so the dedicated
-# example builds the latest upstream checkout with MSBuild.
+# ChakraCore is an optional host-side scripting runtime shared by all
+# WebView backends. Its upstream Windows build is provided as a Visual Studio
+# solution and is built with MSBuild when enabled.
+option(WEBVIEW_ENABLE_CHAKRACORE "Enable the ChakraCore host scripting API" OFF)
 option(WEBVIEW_BUILD_CHAKRA_EXAMPLE "Build the ChakraCore control-script example" OFF)
 
 add_library(project_options INTERFACE)
@@ -58,9 +59,13 @@ if(NOT TARGET nlohmann_json::nlohmann_json)
 endif()
 target_link_libraries(${PROJECT_NAME} INTERFACE nlohmann_json::nlohmann_json)
 
+if(WEBVIEW_ENABLE_CHAKRACORE)
+	include(cmake/ChakraCore.cmake)
+endif()
+
 if(WEBVIEW_BUILD_CHAKRA_EXAMPLE)
-	if(NOT WIN32 OR NOT MSVC)
-		message(FATAL_ERROR "The ChakraCore control-script example currently requires Windows and MSVC")
+	if(NOT WEBVIEW_ENABLE_CHAKRACORE)
+		message(FATAL_ERROR "Set WEBVIEW_ENABLE_CHAKRACORE=ON to build the ChakraCore example")
 	endif()
 	add_subdirectory(examples/chakra-control)
 endif()

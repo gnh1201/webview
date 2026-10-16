@@ -6,29 +6,51 @@ To build these examples, follow the install steps for your OS in the [top level 
 navigation, loads the bundled `index.html`, and shows `Forbidden` if you follow
 its external link.
 
-`chakra-control` demonstrates a host-side ChakraCore script controlling a
-YAWW window. It loads `webview.js` beside the executable, exposes
-`webview.navigate()`, `webview.eval()`, `webview.resizeTo()`, and
-`webview.on()`, and opens a console window for logs and interactive snippets.
-The `ready` and `navigate` events are available to `webview.on`; `eval()` sends
-JavaScript to the embedded page and does not return its result. Enabling the
-example downloads the current `master` branch of ChakraCore and builds its
-Visual Studio solution, so network access and MSVC are required:
+ChakraCore is available as an optional shared host-side API for `wv::WebView` on
+WebView2, EdgeHTML, and MSHTML. Enable it with
+`WEBVIEW_ENABLE_CHAKRACORE=ON`; this downloads ChakraCore's current `master`
+branch and builds its Visual Studio solution, so network access and MSVC are
+required. `wv::ChakraCore::Options` selects whether to start the runtime, the
+script file to load, and whether to open the debug console. With no script path,
+the runtime looks for `webview.js` beside the executable. An explicit script
+path overrides that default. The same C++ API works with each Windows WebView
+backend:
 
 ```powershell
-cmake -S examples/chakra-control -B out/build/chakra-control
+cmake -S . -B out/build/chakra-control -DWEBVIEW_ENABLE_CHAKRACORE=ON -DWEBVIEW_BUILD_CHAKRA_EXAMPLE=ON
 cmake --build out/build/chakra-control --config Debug --target chakra_control
+out/build/chakra-control/bin/Debug/chakra_control.exe --chakra --chakra-script C:/path/to/control.js --chakra-console
 ```
 
-The example can also be included from the repository root with
-`-DWEBVIEW_BUILD_CHAKRA_EXAMPLE=ON`. Run
-`out/build/chakra-control/bin/chakra_control.exe` with a single-config
-generator, or `out/build/chakra-control/bin/Debug/chakra_control.exe` with
-Visual Studio.
-Edit the copied `webview.js` beside the executable to change startup behavior.
-The console's Run button evaluates entered text in the host-side ChakraCore
-context. The ChakraCore C API supplies JavaScript only; it does not provide a
-browser DOM.
+The sample enables ChakraCore by default, so running it without arguments loads
+the adjacent `webview.js`. At runtime, `--chakra-script` selects a different
+script, `--chakra-console` opens the console at startup, and `--no-chakra`
+disables the runtime. When ChakraCore is enabled,
+the window's system menu also gains **Open ChakraCore Console**; open it by
+right-clicking the title bar or pressing Alt+Space. Applications can configure
+it directly:
+
+```cpp
+wv::ChakraCore::Options options;
+options.enabled = true;
+options.scriptPath = L"control.js"; // Leave empty to use adjacent webview.js.
+options.openDebugConsole = false;
+wv::ChakraCore chakra(view, options);
+chakra.start();
+// Open later when needed: chakra.showDebugConsole();
+```
+
+For application targets using CMake, link `webview` and call
+`webview_deploy_chakracore(your_target)` to place the ChakraCore DLL beside the
+executable.
+
+The runtime exposes `webview.navigate()`, `webview.eval()`,
+`webview.resizeTo()`, and `webview.on()` to the host script. `eval()` sends
+JavaScript to the embedded page and does not return its result. The console's
+Run button evaluates text in the host-side ChakraCore context. ChakraCore
+provides JavaScript only; it does not provide a browser DOM. MSHTML requires
+ATL in the Visual Studio C++ toolchain. Select the backend with the root
+project's `WEBVIEW_USE_EDGE` and `WEBVIEW_USE_MSHTML` options.
 
 `mshtml` is a Windows-only example that selects the MSHTML backend, loads a
 local HTML page, demonstrates an HTML-to-native callback, and blocks external
