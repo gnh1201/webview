@@ -1,4 +1,7 @@
-# API Reference
+# YAWW API Reference
+
+YAWW's public C++ interface retains the existing `wv::WebView` type and
+`webview.hpp` header names. This reference documents that API.
 
 ## Table of Contents
 

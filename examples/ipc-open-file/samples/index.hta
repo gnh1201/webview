@@ -18,10 +18,21 @@
     <h1>MCP stdio IPC with HTA</h1>
     <p>The dispatcher routes HTA documents to MSHTML.</p>
     <button id="run">Run evaluate_js</button>
+    <button id="resize">Resize window to 900 × 650</button>
     <button id="check-file">Check relative FileExists</button>
     <button id="check-adodb">Test ADODB.Stream creation</button>
     <pre id="result">Click the button to ask app.js to evaluate 1 + 2.</pre>
     <script>
+      document.getElementById('resize').onclick = function () {
+        var output = document.getElementById('result');
+        try {
+          var resized = window.resizeTo(900, 650);
+          output.innerText = 'Requested window.resizeTo(900, 650). Native result: ' + resized;
+        } catch (error) {
+          output.innerText = 'window.resizeTo error: ' +
+            (error.description || error.message || String(error));
+        }
+      };
       document.getElementById('run').onclick = function () {
         var output = document.getElementById('result');
         output.innerText = 'Waiting for app.js...';

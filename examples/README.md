@@ -1,4 +1,4 @@
-# Webview Examples
+# YAWW Examples
 
 To build these examples, follow the install steps for your OS in the [top level README](./README.md).
 
@@ -20,7 +20,7 @@ The example's CMake project enables `WEBVIEW_USE_MSHTML` automatically; it does
 not use the default WebView2 backend. With a Visual Studio generator, add
 `-A x64` to the configure command to select a 64-bit build.
 
-`ipc` connects the WebView to a WelsonJS MCP process over stdio. Its button calls
+`ipc` connects a YAWW window to a WelsonJS MCP process over stdio. Its button calls
 `window.mcp.tools.call('evaluate_js', {script: 'return 1 + 2;', allowUnsafeEval: true})`
 and displays the returned MCP result (`3`). It looks for `app.js` beside the example executable and
 opens a file picker if the file is missing. Adjust the `cscript.exe` path in
@@ -49,7 +49,7 @@ dispatcher and one viewer for each Windows backend. HTA files go to MSHTML;
 HTML files use WebView2 when its runtime is available, then EdgeHTML when its
 WinRT process API initializes, and otherwise MSHTML. This builds all three
 engine backends, so the Visual Studio C++
-toolchain must include ATL for the MSHTML viewer. The WebView core reads each
+toolchain must include ATL for the MSHTML viewer. The YAWW core reads each
 page's `<title>` with Gumbo and updates the window title; the viewers do not
 parse titles themselves. Configure and build all four executables together
 (use a Visual Studio developer prompt so the C++ compiler is available):
@@ -95,8 +95,8 @@ With a multi-configuration Visual Studio generator, run
 `out/build/ipc-open-file/bin/Debug/ipc_open_file.exe`. Its button calls
 `evaluate_js` with `allowUnsafeEval: true`; adjust the `cscript.exe` selection in
 the viewer if the WelsonJS installation requires a different Windows Script
-Host architecture. HTML and HTA titles are handled by the common WebView
-title parser. Relative filesystem paths in HTA documents resolve from
+Host architecture. HTML and HTA titles are handled by YAWW's common title
+parser. Relative filesystem paths in HTA documents resolve from
 the document directory. The MSHTML host allows ActiveX execution and scripting,
 including `ADODB.Stream`. This policy applies to all documents rendered by the
 MSHTML backend. The MSHTML backend requires ATL.

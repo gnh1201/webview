@@ -1,10 +1,10 @@
-# webview
+# YAWW — Yet Another Windows WebView
 
 [![Discord chat](https://img.shields.io/discord/359930650330923008?logo=discord&utm_source=welsonjs)](https://discord.gg/XKG5CjtXEj?utm_source=welsonjs)
 
-A tiny C++ webview library focused on Windows. It provides backends for Microsoft Edge WebView2 (Chromium), EdgeHTML (legacy Edge), and MSHTML (Trident).
+YAWW (Yet Another Windows WebView) is a small C++ library focused on embedding web content in Windows applications. It provides backends for Microsoft Edge WebView2 (Chromium), EdgeHTML (legacy Edge), and MSHTML (Trident). The existing C++ API, header, and build identifiers retain their `webview` names.
 
-This repository is [forked from MichaelKim/webview](https://github.com/MichaelKim/webview) and builds on ideas from [zerge's webview](https://github.com/webview/webview). Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
+YAWW is [forked from MichaelKim's webview](https://github.com/MichaelKim/webview), builds on ideas from [zerge's webview](https://github.com/webview/webview), and draws inspiration from [litehtml](https://github.com/litehtml/litehtml)'s use of the [Gumbo parser](https://codeberg.org/gumbo-parser/gumbo-parser). Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
 
 ## Support
 
@@ -43,7 +43,7 @@ Examples are in [`examples/`](examples/):
 - `ipc-mshtml` and `ipc-edgehtml` run MCP IPC on the legacy Windows engines; MSHTML uses a callback because it has no native Promise support.
 - `open-file` is a Windows example that routes `.hta` files to MSHTML and `.html` files to WebView2, EdgeHTML, or MSHTML according to runtime availability.
 
-WebView handles HTML `<title>` and `<link rel="icon">` elements as common
+YAWW handles HTML `<title>` and `<link rel="icon">` elements as common
 features. It parses the document head with
 [Gumbo](https://codeberg.org/gumbo-parser/gumbo-parser) and updates the native
 window title and icon across backends;
