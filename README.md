@@ -10,7 +10,7 @@ YAWW draws inspiration from these projects and tools:
 - [zerge's webview](https://github.com/webview/webview) for its cross-platform WebView approach.
 - [litehtml](https://github.com/litehtml/litehtml) and the [Gumbo parser](https://codeberg.org/gumbo-parser/gumbo-parser) for HTML parsing ideas.
 - Microsoft's [mshta HTML Application host](https://learn.microsoft.com/en-us/previous-versions/ms536496%28v%3Dvs.85%29) for the HTA hosting model.
-- [Quark](https://github.com/jscherer92/Quark) for the idea of using ChakraCore as a host-side layer separate from the HTML rendering engine.
+- [Quark](https://github.com/jscherer92/Quark) for the idea of using [ChakraCore](https://github.com/chakra-core/ChakraCore) as a host-side layer separate from the HTML rendering engine.
 
 Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
 
@@ -45,7 +45,7 @@ version metadata. Set the release version in [`cmake/Version.cmake`](cmake/Versi
 
 The MCP stdio API uses [nlohmann/json](https://github.com/nlohmann/json) for JSON-RPC parsing and serialization. CMake uses an installed 3.12.0+ package or fetches that release during configuration.
 
-ChakraCore can be enabled as an optional host-side script runtime shared by the
+[ChakraCore](https://github.com/chakra-core/ChakraCore) can be enabled as an optional host-side script runtime shared by the
 Windows WebView2, EdgeHTML, and MSHTML backends. Configure with
 `-DWEBVIEW_ENABLE_CHAKRACORE=ON` to build the current ChakraCore source and
 expose `wv::ChakraCore` through `webview.hpp`. Choose whether to start it, the
