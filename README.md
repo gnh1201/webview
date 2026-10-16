@@ -1,10 +1,10 @@
-# YAWW — Yet Another Windows WebView
+# YAWW (Yet Another Windows WebView)
 
 [![Discord chat](https://img.shields.io/discord/359930650330923008?logo=discord&utm_source=welsonjs)](https://discord.gg/XKG5CjtXEj?utm_source=welsonjs)
 
 YAWW (Yet Another Windows WebView) is a small C++ library focused on embedding web content in Windows applications. It provides backends for Microsoft Edge WebView2 (Chromium), EdgeHTML (legacy Edge), and MSHTML (Trident). The existing C++ API, header, and build identifiers retain their `webview` names.
 
-YAWW is [forked from MichaelKim's webview](https://github.com/MichaelKim/webview), builds on ideas from [zerge's webview](https://github.com/webview/webview), and draws inspiration from [litehtml](https://github.com/litehtml/litehtml)'s use of the [Gumbo parser](https://codeberg.org/gumbo-parser/gumbo-parser) and Microsoft's [mshta HTML Application host](https://learn.microsoft.com/en-us/previous-versions/ms536496%28v%3Dvs.85%29). Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
+YAWW is forked from [MichaelKim's webview](https://github.com/MichaelKim/webview), builds on ideas from [zerge's webview](https://github.com/webview/webview), and draws inspiration from [litehtml](https://github.com/litehtml/litehtml)'s use of the [Gumbo parser](https://codeberg.org/gumbo-parser/gumbo-parser) and Microsoft's [mshta HTML Application host](https://learn.microsoft.com/en-us/previous-versions/ms536496%28v%3Dvs.85%29). Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
 
 ## Support
 
