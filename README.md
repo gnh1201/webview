@@ -154,9 +154,9 @@ MSHTML compatibility tested in an `mshta`-style industrial application scenario.
 
 ![YAWW running an industrial application test page in the MSHTML engine](https://catswords.blob.core.windows.net/welsonjs/images/screenshot9.png?utm_source=welsonjs)
 
-ChakraCore Console displaying host-side script output alongside the webview.
+MSHTML compatibility test confirming that the UI Components page renders correctly in an `mshta`-style industrial application scenario.
 
-![YAWW ChakraCore Console showing script output](https://catswords.blob.core.windows.net/welsonjs/images/screenshot10.png?utm_source=welsonjs)
+![UI Components page rendered by YAWW's MSHTML engine](https://catswords.blob.core.windows.net/welsonjs/images/screenshot10.png?utm_source=welsonjs)
 
 ChakraCore Console example showing host-side JavaScript control of the webview.
 
