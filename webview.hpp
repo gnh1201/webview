@@ -726,6 +726,13 @@ public:
     void setCallback(jscb callback);       // JS callback
     void setTitle(String t);               // Set title of window
     void setWindowIcon(const String& url);
+#if defined(WEBVIEW_IS_WIN)
+    void setSystemMenuCommand(const String& label, std::function<void()> callback) {
+        systemMenuLabel = label;
+        systemMenuCallback = std::move(callback);
+        updateSystemMenuCommand();
+    }
+#endif
     void setFullscreen(bool fs);           // Set fullscreen
     void setFullscreenFromJS(bool allow);  // Allow setting fullscreen from JS
     void setBgColor(uint8_t r, uint8_t g, uint8_t b,
@@ -740,6 +747,11 @@ public:
     void navigate(String u);         // Navigate to URL
     void preEval(const String& js);  // Eval JS before page loads
     void eval(const String& js);     // Eval JS
+#if defined(WEBVIEW_IS_WIN)
+    bool resizeTo(int width_, int height_) {
+        return resizeNativeWindow(width_, height_);
+    }
+#endif
     void connectProcess(const std::string& executable,
                         const std::vector<std::string>& arguments = {}) {
         mcpClient.connect(executable, arguments);
@@ -754,6 +766,25 @@ public:
     void exit();                     // Stop loop
 
 private:
+#if defined(WEBVIEW_IS_WIN)
+    static constexpr UINT systemMenuCommandId = 0x1FE0;
+    void updateSystemMenuCommand() {
+        if (!hwnd || !IsWindow(hwnd)) return;
+        HMENU menu = GetSystemMenu(hwnd, FALSE);
+        if (!menu) return;
+        DeleteMenu(menu, systemMenuCommandId, MF_BYCOMMAND);
+        if (!systemMenuCallback || systemMenuLabel.empty()) return;
+        if (!systemMenuSeparatorInstalled) {
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            systemMenuSeparatorInstalled = true;
+        }
+        AppendMenuW(menu, MF_STRING, systemMenuCommandId,
+                    systemMenuLabel.c_str());
+    }
+    String systemMenuLabel;
+    std::function<void()> systemMenuCallback;
+    bool systemMenuSeparatorInstalled = false;
+#endif
     void showForbiddenPage();
     bool resizeNativeWindow(int width, int height);
     bool handleNativeMessage(const String& message);
@@ -1085,6 +1116,7 @@ int WebView::WinInit() {
 
     // Used with GetWindowLongPtr in WndProcedure
     SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)this);
+    updateSystemMenuCommand();
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
     SetFocus(hwnd);
@@ -1162,6 +1194,33 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
         reinterpret_cast<WebView*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
 
     switch (msg) {
+#if defined(WEBVIEW_IS_WIN)
+        case WM_NCRBUTTONUP:
+            if (w != nullptr && wparam == HTCAPTION &&
+                w->systemMenuCallback) {
+                HMENU menu = GetSystemMenu(hwnd, FALSE);
+                if (menu) {
+                    POINT point{static_cast<short>(LOWORD(lparam)),
+                                static_cast<short>(HIWORD(lparam))};
+                    SetForegroundWindow(hwnd);
+                    const UINT command = TrackPopupMenu(
+                        menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, point.x, point.y,
+                        0, hwnd, nullptr);
+                    if (command)
+                        SendMessage(hwnd, WM_SYSCOMMAND, command,
+                                    MAKELPARAM(point.x, point.y));
+                }
+                return 0;
+            }
+            return DefWindowProc(hwnd, msg, wparam, lparam);
+        case WM_SYSCOMMAND:
+            if (w != nullptr &&
+                (wparam & 0xFFF0) == systemMenuCommandId) {
+                if (w->systemMenuCallback) w->systemMenuCallback();
+                return 0;
+            }
+            return DefWindowProc(hwnd, msg, wparam, lparam);
+#endif
         case WM_SIZE:
             // WM_SIZE will first fire before the webview finishes loading
             // init() calls resize(), so this call is only for size changes
@@ -3051,5 +3110,9 @@ void WebView::preEval(const wv::String& js) {
 }
 
 }  // namespace wv
+
+#if defined(WEBVIEW_ENABLE_CHAKRACORE)
+#include "webview_chakra.hpp"
+#endif
 
 #endif  // WEBVIEW_H
