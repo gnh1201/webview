@@ -4,7 +4,15 @@
 
 YAWW (Yet Another Windows WebView) is a small C++ library focused on embedding web content in Windows applications. It provides backends for Microsoft Edge WebView2 (Chromium), EdgeHTML (legacy Edge), and MSHTML (Trident). The existing C++ API, header, and build identifiers retain their `webview` names.
 
-YAWW is forked from [MichaelKim's webview](https://github.com/MichaelKim/webview), builds on ideas from [zerge's webview](https://github.com/webview/webview), and draws inspiration from [litehtml](https://github.com/litehtml/litehtml)'s use of the [Gumbo parser](https://codeberg.org/gumbo-parser/gumbo-parser) and Microsoft's [mshta HTML Application host](https://learn.microsoft.com/en-us/previous-versions/ms536496%28v%3Dvs.85%29). Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
+YAWW draws inspiration from these projects and tools:
+
+- [MichaelKim's webview](https://github.com/MichaelKim/webview) (MIT license) as the project's starting point and API foundation.
+- [zerge's webview](https://github.com/webview/webview) for its cross-platform WebView approach.
+- [litehtml](https://github.com/litehtml/litehtml) and the [Gumbo parser](https://codeberg.org/gumbo-parser/gumbo-parser) for HTML parsing ideas.
+- Microsoft's [mshta HTML Application host](https://learn.microsoft.com/en-us/previous-versions/ms536496%28v%3Dvs.85%29) for the HTA hosting model.
+- [Quark](https://github.com/jscherer92/Quark) for the idea of using ChakraCore as a host-side layer separate from the HTML rendering engine.
+
+Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
 
 ## Support
 
@@ -132,6 +140,13 @@ The library supports HTTP(S), local `file:///` URLs, and inline `data:` URLs. Ed
 - [API Reference](docs/api.md)
 - [Limitations](docs/limitations.md)
 - [Examples](examples/README.md)
+
+## License
+
+YAWW is licensed under GNU GPL version 3. The original MichaelKim/webview
+project is identified as MIT-licensed in the inspiration list above. The
+verbatim GPLv3 text is in [LICENSE](LICENSE), from the
+[Free Software Foundation](https://www.gnu.org/licenses/gpl-3.0.txt).
 
 ## MSHTML compatibility test
 
