@@ -148,10 +148,16 @@ project is identified as MIT-licensed in the inspiration list above. The
 verbatim GPLv3 text is in [LICENSE](LICENSE), from the
 [Free Software Foundation](https://www.gnu.org/licenses/gpl-3.0.txt).
 
-## MSHTML compatibility test
+## Screenshots
 
-MSHTML compatibility was exercised with an `mshta`-style industrial application scenario, and the application behaved normally during testing:
+MSHTML compatibility tested in an `mshta`-style industrial application scenario.
 
-![MSHTML compatibility test in an mshta-style industrial application, test page](https://catswords.blob.core.windows.net/welsonjs/images/screenshot9.png?utm_source=welsonjs)
+![YAWW running an industrial application test page in the MSHTML engine](https://catswords.blob.core.windows.net/welsonjs/images/screenshot9.png?utm_source=welsonjs)
 
-![MSHTML compatibility test in an mshta-style industrial application, UI components page](https://catswords.blob.core.windows.net/welsonjs/images/screenshot10.png?utm_source=welsonjs)
+ChakraCore Console displaying host-side script output alongside the webview.
+
+![YAWW ChakraCore Console showing script output](https://catswords.blob.core.windows.net/welsonjs/images/screenshot10.png?utm_source=welsonjs)
+
+## Contact
+
+For questions and project inquiries, contact [oss@catswords.re.kr](mailto:oss@catswords.re.kr).
