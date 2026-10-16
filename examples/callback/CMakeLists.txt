@@ -9,5 +9,6 @@ configure_file(index.html ${CMAKE_BINARY_DIR}/index.html COPYONLY)
 set(CMAKE_WIN32_EXECUTABLE ${WIN32})
 
 add_executable(callback callback.cpp)
+yaww_add_version_info(callback)
 target_compile_features(callback PRIVATE cxx_std_17)
 target_link_libraries(callback PRIVATE webview)

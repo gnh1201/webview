@@ -1,0 +1,31 @@
+#include <windows.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @YAWW_FILE_VERSION@
+ PRODUCTVERSION @YAWW_FILE_VERSION@
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "YAWW contributors\0"
+      VALUE "FileDescription", "@YAWW_FILE_DESCRIPTION@\0"
+      VALUE "FileVersion", "@YAWW_VERSION_STRING@.0\0"
+      VALUE "InternalName", "@YAWW_ORIGINAL_FILENAME@\0"
+      VALUE "LegalCopyright", "Copyright (c) 2026 Namhyeon Go and Catswords OSS contributors\0"
+      VALUE "OriginalFilename", "@YAWW_ORIGINAL_FILENAME@\0"
+      VALUE "ProductName", "YAWW (Yet Another Windows WebView)\0"
+      VALUE "ProductVersion", "@YAWW_VERSION_STRING@\0"
+      VALUE "Comments", "Built with YAWW (Yet Another Windows WebView)\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

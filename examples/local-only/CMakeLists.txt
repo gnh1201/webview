@@ -8,6 +8,7 @@ set(CMAKE_WIN32_EXECUTABLE ${WIN32})
 configure_file(index.html index.html COPYONLY)
 
 add_executable(local_only local_only.cpp)
+yaww_add_version_info(local_only)
 target_compile_features(local_only PRIVATE cxx_std_17)
 target_link_libraries(local_only PRIVATE webview)
 if(MSVC)

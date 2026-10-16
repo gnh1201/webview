@@ -32,6 +32,9 @@ See [MSHTML build instructions](docs/build.md#mshtml-trident) and the [`mshtml` 
 
 See [Build Steps](docs/build.md) for backend requirements and configuration. For a Visual Studio x64 WebView2 build, configure with `-A x64`; use `-A Win32` for 32-bit. The CMake configuration selects the WebView2 loader for the chosen architecture.
 
+Windows example executables embed YAWW file and product descriptions and
+version metadata. Set the release version in [`cmake/Version.cmake`](cmake/Version.cmake).
+
 The MCP stdio API uses [nlohmann/json](https://github.com/nlohmann/json) for JSON-RPC parsing and serialization. CMake uses an installed 3.12.0+ package or fetches that release during configuration.
 
 Examples are in [`examples/`](examples/):

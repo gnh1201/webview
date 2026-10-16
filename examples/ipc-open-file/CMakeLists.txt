@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
-project(ipc_open_file_example LANGUAGES CXX)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/Version.cmake)
+project(ipc_open_file_example VERSION ${YAWW_VERSION} LANGUAGES CXX)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/VersionInfo.cmake)
 
 if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
@@ -27,6 +29,7 @@ if(DEFINED nlohmann_json_SOURCE_DIR)
 endif()
 
 add_executable(ipc_open_file WIN32 dispatcher.cpp)
+yaww_add_version_info(ipc_open_file)
 target_compile_features(ipc_open_file PRIVATE cxx_std_17)
 target_include_directories(ipc_open_file PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 target_compile_definitions(ipc_open_file PRIVATE

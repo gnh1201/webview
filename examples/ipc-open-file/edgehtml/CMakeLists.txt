@@ -7,6 +7,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${IPC_OPEN_FILE_RUNTIME_OUTPUT_DIRECTORY}")
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../ ${CMAKE_CURRENT_BINARY_DIR}/webview)
 
 add_executable(ipc_open_file_edgehtml WIN32 ../viewer.cpp)
+yaww_add_version_info(ipc_open_file_edgehtml)
 target_compile_features(ipc_open_file_edgehtml PRIVATE cxx_std_17)
 target_compile_definitions(ipc_open_file_edgehtml PRIVATE
   _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)

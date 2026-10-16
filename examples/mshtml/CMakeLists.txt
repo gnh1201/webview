@@ -11,6 +11,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../ ${CMAKE_CURRENT_BINARY_DIR}/
 set(CMAKE_WIN32_EXECUTABLE ${WIN32})
 
 add_executable(mshtml_example mshtml.cpp)
+yaww_add_version_info(mshtml_example)
 target_compile_features(mshtml_example PRIVATE cxx_std_17)
 target_link_libraries(mshtml_example PRIVATE webview)
 add_custom_command(TARGET mshtml_example POST_BUILD
