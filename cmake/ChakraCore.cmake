@@ -28,6 +28,8 @@ set(CHAKRACORE_OUTPUT_DIR
 	"${chakracore_SOURCE_DIR}/Build/VcBuild/bin/${CHAKRACORE_PLATFORM}_release")
 set(CHAKRACORE_LIBRARY "${CHAKRACORE_OUTPUT_DIR}/ChakraCore.lib")
 set(CHAKRACORE_DLL "${CHAKRACORE_OUTPUT_DIR}/ChakraCore.dll")
+set_property(TARGET webview PROPERTY WEBVIEW_CHAKRACORE_DLL
+	"${CHAKRACORE_DLL}")
 add_custom_target(webview_chakracore_build
 	COMMAND "${WEBVIEW_MSBUILD_EXECUTABLE}"
 		"${chakracore_SOURCE_DIR}/Build/Chakra.Core.sln"
@@ -42,8 +44,10 @@ target_link_libraries(webview INTERFACE "${CHAKRACORE_LIBRARY}" shell32)
 add_dependencies(webview webview_chakracore_build)
 
 function(webview_deploy_chakracore target)
+	get_property(chakracore_runtime TARGET webview
+		PROPERTY WEBVIEW_CHAKRACORE_DLL)
 	add_custom_command(TARGET "${target}" POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			"${CHAKRACORE_DLL}" "$<TARGET_FILE_DIR:${target}>/ChakraCore.dll"
+			"${chakracore_runtime}" "$<TARGET_FILE_DIR:${target}>/ChakraCore.dll"
 		VERBATIM)
 endfunction()

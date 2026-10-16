@@ -22,6 +22,18 @@ cmake --build out/build/chakra-control --config Debug --target chakra_control
 out/build/chakra-control/bin/Debug/chakra_control.exe --chakra --chakra-script C:/path/to/control.js --chakra-console
 ```
 
+Engine-specific examples share the controller source and script while
+selecting a backend in separate CMake projects:
+
+```powershell
+cmake -S examples/chakra-control-edgehtml -B out/build/chakra-control-edgehtml
+cmake --build out/build/chakra-control-edgehtml --config Debug --target chakra_control_edgehtml
+cmake -S examples/chakra-control-mshtml -B out/build/chakra-control-mshtml
+cmake --build out/build/chakra-control-mshtml --config Debug --target chakra_control_mshtml
+```
+
+The MSHTML build requires ATL in the Visual Studio C++ toolchain.
+
 The sample enables ChakraCore by default, so running it without arguments loads
 the adjacent `webview.js`. At runtime, `--chakra-script` selects a different
 script, `--chakra-console` opens the console at startup, and `--no-chakra`

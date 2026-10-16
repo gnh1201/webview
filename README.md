@@ -52,6 +52,7 @@ instructions](examples/README.md#yaww-examples).
 Examples are in [`examples/`](examples/):
 
 - `basic` opens `https://google.com`.
+- `chakra-control`, `chakra-control-edgehtml`, and `chakra-control-mshtml` demonstrate the shared ChakraCore host API with WebView2, EdgeHTML, and MSHTML.
 - `local-only` loads `index.html` from the current directory and displays Not Found if it is missing. External page navigation is blocked with a Forbidden page.
 - `mshtml` demonstrates the legacy MSHTML backend, local content, and a JavaScript-to-native callback.
 - `ipc` demonstrates callback-based `window.mcp.tools.call('evaluate_js', params, callback)` over stdio JSON-RPC; the same example works with Promise-based engines.
