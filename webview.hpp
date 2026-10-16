@@ -740,6 +740,11 @@ public:
     void navigate(String u);         // Navigate to URL
     void preEval(const String& js);  // Eval JS before page loads
     void eval(const String& js);     // Eval JS
+#if defined(WEBVIEW_IS_WIN)
+    bool resizeTo(int width_, int height_) {
+        return resizeNativeWindow(width_, height_);
+    }
+#endif
     void connectProcess(const std::string& executable,
                         const std::vector<std::string>& arguments = {}) {
         mcpClient.connect(executable, arguments);
