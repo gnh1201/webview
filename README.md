@@ -158,6 +158,10 @@ ChakraCore Console displaying host-side script output alongside the webview.
 
 ![YAWW ChakraCore Console showing script output](https://catswords.blob.core.windows.net/welsonjs/images/screenshot10.png?utm_source=welsonjs)
 
+ChakraCore Console example showing host-side JavaScript control of the webview.
+
+![YAWW ChakraCore Console controlling a webview](https://catswords.blob.core.windows.net/welsonjs/images/screenshot11.png?utm_source=welsonjs)
+
 ## Contact
 
 For questions and project inquiries, contact [oss@catswords.re.kr](mailto:oss@catswords.re.kr).
