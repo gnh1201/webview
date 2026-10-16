@@ -6,5 +6,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../ ${CMAKE_CURRENT_BINARY_DIR}/
 set(CMAKE_WIN32_EXECUTABLE ${WIN32})
 
 add_executable(fullscreen fullscreen.cpp)
+yaww_add_version_info(fullscreen)
 target_compile_features(fullscreen PRIVATE cxx_std_17)
 target_link_libraries(fullscreen PRIVATE webview)

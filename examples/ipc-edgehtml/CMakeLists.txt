@@ -11,6 +11,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../ ${CMAKE_CURRENT_BINARY_DIR}/
 
 set(CMAKE_WIN32_EXECUTABLE ${WIN32})
 add_executable(ipc_edgehtml_example ipc.cpp)
+yaww_add_version_info(ipc_edgehtml_example)
 target_compile_features(ipc_edgehtml_example PRIVATE cxx_std_17)
 target_compile_definitions(ipc_edgehtml_example PRIVATE
   _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)

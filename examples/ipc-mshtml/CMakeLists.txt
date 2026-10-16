@@ -10,6 +10,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../ ${CMAKE_CURRENT_BINARY_DIR}/
 
 set(CMAKE_WIN32_EXECUTABLE ${WIN32})
 add_executable(ipc_mshtml_example ../ipc/ipc.cpp)
+yaww_add_version_info(ipc_mshtml_example)
 target_compile_features(ipc_mshtml_example PRIVATE cxx_std_17)
 target_link_libraries(ipc_mshtml_example PRIVATE webview comdlg32)
 configure_file(index.html ${CMAKE_CURRENT_BINARY_DIR}/index.html COPYONLY)

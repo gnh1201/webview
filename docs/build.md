@@ -20,6 +20,15 @@ static library. The first configure therefore needs network access to
 Codeberg. Manual builds must also compile Gumbo's C sources and link them with
 the application.
 
+## Windows executable metadata
+
+Windows example executables include a version resource with YAWW product and
+company fields, a target-specific file description, the original executable
+name, and file/product version strings. The version is defined in
+`cmake/Version.cmake`; update `YAWW_VERSION` there when preparing a new
+release. CMake encodes it as a four-part Windows file version, padding the
+fourth component with zero (for example, `1.0.0` becomes `1.0.0.0`).
+
 ## EdgeHTML (Edge Legacy)
 
 _Note: It's highly recommended to choose the new Chromium-based Edge over the EdgeHTML-based Edge Legacy._

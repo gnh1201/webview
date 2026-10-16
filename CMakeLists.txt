@@ -1,6 +1,7 @@
 cmake_minimum_required (VERSION 3.15)
+include(cmake/Version.cmake)
 project(webview
-  VERSION 1.0.0
+  VERSION ${YAWW_VERSION}
 	LANGUAGES CXX
   DESCRIPTION
     "A tiny cross-platform webview library written in C++."
@@ -9,6 +10,7 @@ if(POLICY CMP0135)
 	cmake_policy(SET CMP0135 NEW)
 endif()
 include(cmake/Settings.cmake)
+include(cmake/VersionInfo.cmake)
 
 # CMake's MSVC defaults add /W3 globally. The project sets /W4 on its targets,
 # so remove that default from the consuming directory to avoid D9025.

@@ -8,6 +8,7 @@ set(CMAKE_WIN32_EXECUTABLE ${WIN32})
 
 function(AddTest testname)
   add_executable(${testname} ${testname}.cpp)
+  yaww_add_version_info(${testname})
   target_compile_features(${testname} PRIVATE cxx_std_17)
   target_link_libraries(${testname} PRIVATE webview)
   add_test(${testname} ${testname})

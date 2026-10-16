@@ -6,5 +6,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../ ${CMAKE_CURRENT_BINARY_DIR}/
 set(CMAKE_WIN32_EXECUTABLE ${WIN32})
 
 add_executable(basic basic.cpp)
+yaww_add_version_info(basic)
 target_compile_features(basic PRIVATE cxx_std_17)
 target_link_libraries(basic PRIVATE webview)
