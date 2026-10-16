@@ -1,4 +1,4 @@
-# Build Steps
+# YAWW Build Steps
 
 ## Table of Contents
 
@@ -26,7 +26,7 @@ _Note: It's highly recommended to choose the new Chromium-based Edge over the Ed
 
 Define `WEBVIEW_WIN` before adding `webview.hpp`.
 
-In order to target EdgeHTML (Microsoft Edge Legacy), `webview` uses the new C++/WinRT API.
+In order to target EdgeHTML (Microsoft Edge Legacy), YAWW uses the C++/WinRT API.
 
 ### Requirements
 
@@ -82,7 +82,7 @@ If your `winrt` directory is located somewhere else, change the `/I "."` argumen
 
 Define `WEBVIEW_EDGE` before adding `webview.hpp`.
 
-To target the new Chromium Edge, `webview` uses the new WebView2 SDK.
+To target Chromium Edge, YAWW uses the WebView2 SDK.
 
 Follow the instructions in the [official WebView2 docs](https://docs.microsoft.com/en-us/microsoft-edge/webview2/gettingstarted/win32).
 
@@ -127,7 +127,7 @@ See the Windows-only [`mshtml` example](../examples/mshtml/) for a local HTML pa
 
 ## MacOS
 
-webview depends on the Cocoa and Webkit frameworks. Also, make sure your compiler supports Objective-C++ (g++ and clang++ should both work).
+The macOS backend depends on the Cocoa and WebKit frameworks. Also, make sure your compiler supports Objective-C++ (g++ and clang++ should both work).
 
 Use the provided CMake config to compile. Otherwise, to manually compile,
 
@@ -143,7 +143,7 @@ clang++ main.cpp -DWEBVIEW_MAC -ObjC++ -std=c++11 -framework Cocoa -framework We
 
 ## Linux
 
-webview depends on `gtk+-3.0` and `webkit2gtk-4.0`:
+The Linux backend depends on `gtk+-3.0` and `webkit2gtk-4.0`:
 
 ```sh
 sudo apt-get install libgtk-3-dev libwebkit2gtk-4.0-37 libwebkit2gtk-4.0-dev
@@ -183,7 +183,7 @@ http-server -p 8080         # Node
 
 ### Running Headless Tests
 
-- Windows: Supported only for Chromium Edge (`WEBVIEW_EDGE`). Make sure to install the Windows 10 SDK and the WebView2 Runtime before running the webview.
+- Windows: YAWW currently supports Chromium Edge (`WEBVIEW_EDGE`) in this test configuration. Install the Windows 10 SDK and the WebView2 Runtime before running it.
 - MacOS: Supported.
 - Linux: You'll need to run `xvfb` (or similar) before running.
 

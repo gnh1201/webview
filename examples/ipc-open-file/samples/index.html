@@ -9,8 +9,15 @@
     <h1>MCP stdio IPC with HTML</h1>
     <p>The dispatcher selects the best available HTML engine.</p>
     <button id="run">Run evaluate_js</button>
+    <button id="resize">Resize window to 900 × 650</button>
     <pre id="result">Click the button to ask app.js to evaluate 1 + 2.</pre>
     <script>
+      document.getElementById('resize').onclick = function () {
+        var resized = window.resizeTo(900, 650);
+        document.getElementById('result').textContent =
+          'Requested window.resizeTo(900, 650). Native result: ' + resized;
+      };
+
       document.getElementById('run').onclick = function () {
         var output = document.getElementById('result');
         output.textContent = 'Waiting for app.js...';

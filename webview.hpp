@@ -28,6 +28,8 @@
 #include <cctype>
 #include <cwchar>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -165,6 +167,7 @@ class MshtmlExternalDispatch
 public:
     std::function<bool(const std::wstring&)> invoke;
     std::function<bool(LONG, LONG)> moveWindow;
+    std::function<bool(LONG, LONG)> resizeWindow;
     bool allowActiveX = false;
     DWORD hostSecurityQueries = 0;
     DWORD securityQueries = 0;
@@ -350,6 +353,7 @@ public:
         if (_wcsicmp(names[0], L"invoke") == 0) ids[0] = 1;
         else if (_wcsicmp(names[0], L"securityDiagnostics") == 0) ids[0] = 2;
         else if (_wcsicmp(names[0], L"moveTo") == 0) ids[0] = 3;
+        else if (_wcsicmp(names[0], L"resizeTo") == 0) ids[0] = 4;
         else return DISP_E_UNKNOWNNAME;
         return S_OK;
     }
@@ -392,6 +396,22 @@ public:
                 VariantInit(result);
                 result->vt = VT_BOOL;
                 result->boolVal = moved ? VARIANT_TRUE : VARIANT_FALSE;
+            }
+            return S_OK;
+        }
+        if (id == 4) {
+            if (!params || params->cArgs != 2) return DISP_E_BADPARAMCOUNT;
+            CComVariant width, height;
+            HRESULT hr = VariantChangeType(&width, &params->rgvarg[1], 0, VT_I4);
+            if (SUCCEEDED(hr))
+                hr = VariantChangeType(&height, &params->rgvarg[0], 0, VT_I4);
+            if (FAILED(hr)) return DISP_E_TYPEMISMATCH;
+            const bool resized = resizeWindow &&
+                                 resizeWindow(width.lVal, height.lVal);
+            if (result) {
+                VariantInit(result);
+                result->vt = VT_BOOL;
+                result->boolVal = resized ? VARIANT_TRUE : VARIANT_FALSE;
             }
             return S_OK;
         }
@@ -577,12 +597,18 @@ public:
           title(title_),
           url(url_) {
         inject += Str(
-            "if(!window.__wvMcpInstalled){window.__wvMcpInstalled=true;"
-            "window.mcp=window.mcp||{};window.mcp.tools=window.mcp.tools||{};"
-            "window.__wvMcpPending={};window.__wvMcpNext=0;");
+            "if(!window.__wvWindowControlsInstalled){"
+            "window.__wvWindowControlsInstalled=true;");
 #if defined(WEBVIEW_MSHTML)
         inject += Str(
+            "window.resizeTo=function(w,h){w=Math.floor(Number(w));h=Math.floor(Number(h));"
+            "if(!isFinite(w)||!isFinite(h)||w<=0||h<=0)return;"
+            "try{return window.external.resizeTo(w,h);}catch(e){}"
+            "try{return window.external.invoke('__wv_resize__'+w+'|'+h);}catch(e){return false;}};"
             "try{window.moveTo=function(x,y){return window.external.moveTo(x,y);};}catch(e){}"
+            "}");
+        inject += Str(
+            "if(!window.__wvJsonCompatInstalled){window.__wvJsonCompatInstalled=true;"
             "if(!window.JSON){window.JSON={};"
             "window.JSON.stringify=function(v){function q(s){return '\"'+String(s).replace(/[\\\"\\\\\\x00-\\x1f]/g,function(c){"
             "var m={'\\\"':'\\\\\\\"','\\\\':'\\\\\\\\','\\b':'\\\\b','\\f':'\\\\f','\\n':'\\\\n','\\r':'\\\\r','\\t':'\\\\t'};"
@@ -591,7 +617,19 @@ public:
             "if(t==='number'||t==='boolean')return isFinite(x)?String(x):'null';if(t!=='object')return undefined;"
             "var a=[],i,k,z;if(Object.prototype.toString.call(x)==='[object Array]'){for(i=0;i<x.length;i++){z=e(x[i]);a.push(z===undefined?'null':z);}return '['+a.join(',')+']';}"
             "for(k in x)if(Object.prototype.hasOwnProperty.call(x,k)){z=e(x[k]);if(z!==undefined)a.push(q(k)+':'+z);}return '{'+a.join(',')+'}';}"
-            "return e(v);};window.JSON.parse=function(s){return eval('('+s+')');};}"
+            "return e(v);};window.JSON.parse=function(s){return eval('('+s+')');};}}");
+#else
+        inject += Str(
+            "window.resizeTo=function(w,h){w=Math.floor(Number(w));h=Math.floor(Number(h));"
+            "if(!isFinite(w)||!isFinite(h)||w<=0||h<=0)return;"
+            "window.external.invoke('__wv_resize__'+w+'|'+h);};}");
+#endif
+        inject += Str(
+            "if(!window.__wvMcpInstalled){window.__wvMcpInstalled=true;"
+            "window.mcp=window.mcp||{};window.mcp.tools=window.mcp.tools||{};"
+            "window.__wvMcpPending={};window.__wvMcpNext=0;");
+#if defined(WEBVIEW_MSHTML)
+        inject += Str(
             "window.__wvMcpResolve=function(i,v,e){var cb=window.__wvMcpPending[i];"
             "if(!cb)return;delete window.__wvMcpPending[i];if(e){cb(new Error(v),null);return;}"
             "var r=v;if(r&&r.isError){var m=r.content&&r.content.length?"
@@ -667,6 +705,10 @@ public:
         mshtmlHostWindow.Release();
         mshtmlBrowser.Release();
         if (mshtmlHost && IsWindow(mshtmlHost)) DestroyWindow(mshtmlHost);
+        for (const auto& snapshot : mshtmlDocumentSnapshots) {
+            std::error_code ec;
+            std::filesystem::remove(snapshot, ec);
+        }
         if (mshtmlOleInitialized) {
             mshtmlOleInitialized = false;
             OleUninitialize();
@@ -713,6 +755,10 @@ public:
 
 private:
     void showForbiddenPage();
+    bool resizeNativeWindow(int width, int height);
+    bool handleNativeMessage(const String& message);
+    bool handleWindowControlMessage(const String& message);
+    bool handleHtmlMetadataMessage(const String& message);
     bool handleMcpMessage(const String& message);
     static std::pair<std::string, std::string> htmlMetadataFromMarkup(
         const std::string& html);
@@ -720,6 +766,9 @@ private:
                                  const std::string& href);
 #if defined(WEBVIEW_IS_WIN)
     void updateTitleFromLocalFile(const std::wstring& uri);
+#endif
+#if defined(WEBVIEW_MSHTML)
+    std::wstring prepareMshtmlDocument(const std::wstring& uri);
 #endif
     static String fromUtf8(const std::string& value);
     static std::string percentDecode(const std::string& value);
@@ -866,6 +915,7 @@ private:
     std::wstring mshtmlNavigationError;
     String pendingEval;
     bool mshtmlActiveXEnabled = true;
+    std::vector<std::filesystem::path> mshtmlDocumentSnapshots;
 #elif defined(WEBVIEW_MAC)   // WEBVIEW_EDGE
     String inject =
         Str("window.external={invoke:arg=>window.webkit."
@@ -1120,6 +1170,11 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 w->resize();
             }
             return DefWindowProc(hwnd, msg, wparam, lparam);
+        case WM_APP + 47:
+            if (w != nullptr)
+                w->resizeNativeWindow(static_cast<int>(wparam),
+                                      static_cast<int>(lparam));
+            return 0;
 #if defined(WEBVIEW_WIN) || defined(WEBVIEW_EDGE) || \
     defined(WEBVIEW_MSHTML)
         case WM_APP + 42:
@@ -1156,7 +1211,7 @@ LRESULT CALLBACK WebView::WndProcedure(HWND hwnd, UINT msg, WPARAM wparam,
                 callbacks.swap(w->mshtmlPendingCallbacks);
                 for (auto& argument : callbacks) {
                     try {
-                        if (!w->handleMcpMessage(argument) && w->js_callback)
+                        if (!w->handleNativeMessage(argument) && w->js_callback)
                             w->js_callback(*w, argument);
                     } catch (...) {
                         MessageBox(hwnd,
@@ -1318,7 +1373,7 @@ int WebView::init() {
     webview.Settings().IsScriptNotifyAllowed(true);
     webview.ScriptNotify([this](const auto&, const auto& args) {
         std::wstring ws{args.Value()};
-        if (!handleMcpMessage(ws) && js_callback) {
+        if (!handleNativeMessage(ws) && js_callback) {
             js_callback(*this, ws);
         }
     });
@@ -1458,7 +1513,7 @@ int WebView::init() {
             if (FAILED(getMessageResult)) return getMessageResult;
             std::wstring message(messageRaw);
             CoTaskMemFree(messageRaw);
-            if (!handleMcpMessage(message) && js_callback) {
+            if (!handleNativeMessage(message) && js_callback) {
                 js_callback(*this, message);
             }
             return S_OK;
@@ -1889,11 +1944,22 @@ int WebView::init() {
                    SetWindowPos(hwnd, nullptr, x, y, 0, 0,
                                 SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE);
         };
+        external->resizeWindow = [this](LONG requestedWidth, LONG requestedHeight) {
+            if (!hwnd || !IsWindow(hwnd) || requestedWidth <= 0 || requestedHeight <= 0)
+                return false;
+            return PostMessage(hwnd, WM_APP + 47,
+                               static_cast<WPARAM>(requestedWidth),
+                               static_cast<LPARAM>(requestedHeight)) != FALSE;
+        };
         external->invoke = [this](const std::wstring& value) {
-            const bool isMcpCall = value.compare(0, 15, L"__wv_mcp_call__") == 0;
+            const bool isResizeCall = value.compare(0, 13, L"__wv_resize__") == 0;
             constexpr wchar_t metadataPrefix[] = L"__wv_html_metadata__";
             const bool isMetadataUpdate = value.rfind(metadataPrefix, 0) == 0;
-            if (!js_callback && !isMcpCall && !isMetadataUpdate) return false;
+            constexpr wchar_t mcpCallPrefix[] = L"__wv_mcp_call__";
+            const bool isNativeBridgeMessage =
+                value.rfind(mcpCallPrefix, 0) == 0 || isMetadataUpdate ||
+                isResizeCall;
+            if (!js_callback && !isNativeBridgeMessage) return false;
             try {
                 mshtmlPendingCallbacks.push_back(value);
             } catch (...) {
@@ -2004,6 +2070,96 @@ void WebView::setBgColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     }
 }
 
+std::wstring WebView::prepareMshtmlDocument(const std::wstring& uri) {
+    if (!isLocalFileUri(uri.c_str())) return uri;
+
+    std::wstring sourcePath(32768, L'\0');
+    DWORD sourcePathLength = static_cast<DWORD>(sourcePath.size());
+    if (FAILED(PathCreateFromUrlW(uri.c_str(), sourcePath.data(),
+                                  &sourcePathLength, 0)))
+        return uri;
+    sourcePath.resize(wcslen(sourcePath.c_str()));
+
+    const std::filesystem::path source(sourcePath);
+    std::wstring extension = source.extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
+    if (extension != L".html" && extension != L".htm" && extension != L".hta")
+        return uri;
+
+    std::ifstream input(source, std::ios::binary);
+    if (!input) return uri;
+    std::string html((std::istreambuf_iterator<char>(input)),
+                     std::istreambuf_iterator<char>());
+    if (html.empty() || html.size() >= (16u * 1024u * 1024u)) return uri;
+
+    GumboOutput* parsed = gumbo_parse_with_options(
+        &kGumboDefaultOptions, html.data(), html.size());
+    if (!parsed) return uri;
+    size_t insertionPoint = std::string::npos;
+    auto findFirstScript = [&](auto&& self, const GumboNode* node) -> void {
+        if (!node || insertionPoint != std::string::npos) return;
+        const GumboVector* children = nullptr;
+        if (node->type == GUMBO_NODE_DOCUMENT) {
+            children = &node->v.document.children;
+        } else if (node->type == GUMBO_NODE_ELEMENT) {
+            const GumboElement& element = node->v.element;
+            if (element.tag == GUMBO_TAG_SCRIPT) {
+                insertionPoint = element.start_pos.offset;
+                return;
+            }
+            children = &element.children;
+        }
+        if (children) {
+            for (unsigned int i = 0; i < children->length; ++i)
+                self(self, static_cast<const GumboNode*>(children->data[i]));
+        }
+    };
+    findFirstScript(findFirstScript, parsed->document);
+    gumbo_destroy_output(&kGumboDefaultOptions, parsed);
+    if (insertionPoint == std::string::npos || insertionPoint > html.size())
+        return uri;
+
+    const std::string bootstrap =
+        "<script type=\"text/javascript\">"
+        "window.resizeTo=function(w,h){w=Math.floor(Number(w));h=Math.floor(Number(h));"
+        "if(!isFinite(w)||!isFinite(h)||w<=0||h<=0)return false;"
+        "try{return window.external.resizeTo(w,h);}catch(e){return false;}};"
+        "</script>";
+    html.insert(insertionPoint, bootstrap);
+
+    wchar_t temporaryPath[MAX_PATH]{};
+    if (!GetTempFileNameW(source.parent_path().c_str(), L"wvb", 0,
+                          temporaryPath))
+        return uri;
+    std::filesystem::path snapshot(temporaryPath);
+    snapshot.replace_extension(L".wvboot.html");
+    if (!MoveFileW(temporaryPath, snapshot.c_str())) {
+        DeleteFileW(temporaryPath);
+        return uri;
+    }
+
+    {
+        std::ofstream output(snapshot, std::ios::binary | std::ios::trunc);
+        if (!output || !output.write(html.data(),
+                                     static_cast<std::streamsize>(html.size()))) {
+            DeleteFileW(snapshot.c_str());
+            return uri;
+        }
+    }
+
+    std::wstring snapshotUrl(32768, L'\0');
+    DWORD snapshotUrlLength = static_cast<DWORD>(snapshotUrl.size());
+    if (FAILED(UrlCreateFromPathW(snapshot.c_str(), snapshotUrl.data(),
+                                  &snapshotUrlLength, 0))) {
+        DeleteFileW(snapshot.c_str());
+        return uri;
+    }
+    snapshotUrl.resize(wcslen(snapshotUrl.c_str()));
+    mshtmlDocumentSnapshots.push_back(snapshot);
+    return snapshotUrl;
+}
+
 void WebView::navigate(std::wstring u) {
     if (!init_done) {
         url = u;
@@ -2032,6 +2188,7 @@ void WebView::navigate(std::wstring u) {
         }
         return;
     }
+    u = prepareMshtmlDocument(u);
     CComVariant address(u.c_str());
     CComVariant flags, targetFrame, postData, headers;
     const HRESULT navigateResult = mshtmlBrowser->Navigate2(
@@ -2169,7 +2326,7 @@ int WebView::init() {
                 id body = [scriptMessage body];
                 if (![body isKindOfClass:[NSString class]]) return;
                 std::string msg = [body UTF8String];
-                if (!this->handleMcpMessage(msg) && this->js_callback) {
+                if (!this->handleNativeMessage(msg) && this->js_callback) {
                     this->js_callback(*this, msg);
                 }
             }),
@@ -2467,7 +2624,7 @@ void WebView::external_message_received_cb(WebKitUserContentManager*,
     WebView* w = static_cast<WebView*>(arg);
     JSCValue* value = webkit_javascript_result_get_js_value(r);
     std::string str = std::string(jsc_value_to_string(value));
-    if (!w->handleMcpMessage(str) && w->js_callback) {
+    if (!w->handleNativeMessage(str) && w->js_callback) {
         w->js_callback(*w, str);
     }
 }
@@ -2770,30 +2927,86 @@ std::string WebView::percentDecode(const std::string& value) {
     return decoded;
 }
 
-bool WebView::handleMcpMessage(const wv::String& message) {
-    const wv::String metadataPrefix = Str("__wv_html_metadata__");
-    if (message.compare(0, metadataPrefix.size(), metadataPrefix) == 0) {
-        try {
-            std::string encoded;
-            for (const auto c : message.substr(metadataPrefix.size())) {
-                if (c > 0x7f) return true;
-                encoded += static_cast<char>(c);
-            }
-            const size_t separator = encoded.find('|');
-            if (separator == std::string::npos) return true;
-            const auto markup = percentDecode(encoded.substr(0, separator));
-            const auto base = percentDecode(encoded.substr(separator + 1));
-            const auto metadata = htmlMetadataFromMarkup(markup);
-            if (!metadata.first.empty()) setTitle(fromUtf8(metadata.first));
-            if (!metadata.second.empty()) {
-                const auto iconUrl = resolveIconUrl(fromUtf8(base), metadata.second);
-                if (!iconUrl.empty()) setWindowIcon(iconUrl);
-            }
-        } catch (...) {
-            // Invalid or incomplete metadata leaves the window unchanged.
+bool WebView::handleWindowControlMessage(const wv::String& message) {
+    const wv::String resizePrefix = Str("__wv_resize__");
+    if (message.compare(0, resizePrefix.size(), resizePrefix) != 0) return false;
+    try {
+        std::string dimensions;
+        for (const auto c : message.substr(resizePrefix.size())) {
+            if (c > 0x7f) return true;
+            dimensions += static_cast<char>(c);
         }
-        return true;
+        const size_t separator = dimensions.find('|');
+        if (separator == std::string::npos) return true;
+        const int requestedWidth = std::stoi(dimensions.substr(0, separator));
+        const int requestedHeight = std::stoi(dimensions.substr(separator + 1));
+        if (requestedWidth <= 0 || requestedHeight <= 0) return true;
+#if defined(WEBVIEW_IS_WIN)
+        resizeNativeWindow(requestedWidth, requestedHeight);
+#elif defined(WEBVIEW_MAC)
+        if (window)
+            [window setContentSize:NSMakeSize(requestedWidth, requestedHeight)];
+#elif defined(WEBVIEW_GTK)
+        if (window)
+            gtk_window_resize(GTK_WINDOW(window), requestedWidth, requestedHeight);
+#endif
+    } catch (...) {
+        // Ignore malformed resize requests.
     }
+    return true;
+}
+
+bool WebView::resizeNativeWindow(int requestedWidth, int requestedHeight) {
+#if defined(WEBVIEW_IS_WIN)
+    if (!hwnd || !IsWindow(hwnd) || requestedWidth <= 0 || requestedHeight <= 0)
+        return false;
+    width = requestedWidth;
+    height = requestedHeight;
+    const int scaledWidth = MulDiv(requestedWidth, dpi, USER_DEFAULT_SCREEN_DPI);
+    const int scaledHeight = MulDiv(requestedHeight, dpi, USER_DEFAULT_SCREEN_DPI);
+    if (IsZoomed(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+    return SetWindowPos(hwnd, nullptr, 0, 0, scaledWidth, scaledHeight,
+                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                            SWP_FRAMECHANGED) != FALSE;
+#else
+    (void)requestedWidth;
+    (void)requestedHeight;
+    return false;
+#endif
+}
+
+bool WebView::handleHtmlMetadataMessage(const wv::String& message) {
+    const wv::String metadataPrefix = Str("__wv_html_metadata__");
+    if (message.compare(0, metadataPrefix.size(), metadataPrefix) != 0)
+        return false;
+    try {
+        std::string encoded;
+        for (const auto c : message.substr(metadataPrefix.size())) {
+            if (c > 0x7f) return true;
+            encoded += static_cast<char>(c);
+        }
+        const size_t separator = encoded.find('|');
+        if (separator == std::string::npos) return true;
+        const auto markup = percentDecode(encoded.substr(0, separator));
+        const auto base = percentDecode(encoded.substr(separator + 1));
+        const auto metadata = htmlMetadataFromMarkup(markup);
+        if (!metadata.first.empty()) setTitle(fromUtf8(metadata.first));
+        if (!metadata.second.empty()) {
+            const auto iconUrl = resolveIconUrl(fromUtf8(base), metadata.second);
+            if (!iconUrl.empty()) setWindowIcon(iconUrl);
+        }
+    } catch (...) {
+        // Invalid or incomplete metadata leaves the window unchanged.
+    }
+    return true;
+}
+
+bool WebView::handleNativeMessage(const wv::String& message) {
+    return handleWindowControlMessage(message) ||
+           handleHtmlMetadataMessage(message) || handleMcpMessage(message);
+}
+
+bool WebView::handleMcpMessage(const wv::String& message) {
     const wv::String prefix = Str("__wv_mcp_call__");
     if (message.compare(0, prefix.size(), prefix) != 0) return false;
     const auto body = message.substr(prefix.size());
