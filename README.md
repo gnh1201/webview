@@ -56,6 +56,10 @@ the window title bar's system menu can open the console later.
 Applications using CMake should call `webview_deploy_chakracore(target)` to
 copy the runtime DLL beside their executable. See the [ChakraCore example
 instructions](examples/README.md#yaww-examples).
+The debug console uses [Scintilla](https://www.scintilla.org/) and
+[Lexilla](https://www.scintilla.org/Lexilla.html) for JavaScript syntax
+highlighting by default; set `WEBVIEW_ENABLE_SCINTILLA_CONSOLE=OFF` to use a
+plain text input editor.
 
 Examples are in [`examples/`](examples/):
 
