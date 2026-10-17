@@ -43,6 +43,11 @@ target_compile_definitions(webview INTERFACE WEBVIEW_ENABLE_CHAKRACORE)
 target_link_libraries(webview INTERFACE "${CHAKRACORE_LIBRARY}" shell32)
 add_dependencies(webview webview_chakracore_build)
 
+if(WEBVIEW_ENABLE_SCINTILLA_CONSOLE)
+	include("${CMAKE_CURRENT_LIST_DIR}/Scintilla.cmake")
+	target_compile_definitions(webview INTERFACE WEBVIEW_CHAKRACORE_SCINTILLA)
+endif()
+
 function(webview_deploy_chakracore target)
 	get_property(chakracore_runtime TARGET webview
 		PROPERTY WEBVIEW_CHAKRACORE_DLL)
@@ -50,4 +55,26 @@ function(webview_deploy_chakracore target)
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different
 			"${chakracore_runtime}" "$<TARGET_FILE_DIR:${target}>/ChakraCore.dll"
 		VERBATIM)
+	if(WEBVIEW_ENABLE_SCINTILLA_CONSOLE)
+		get_property(scintilla_runtime TARGET webview
+			PROPERTY WEBVIEW_SCINTILLA_DLL)
+		get_property(lexilla_runtime TARGET webview
+			PROPERTY WEBVIEW_LEXILLA_DLL)
+		get_property(scintilla_license TARGET webview
+			PROPERTY WEBVIEW_SCINTILLA_LICENSE)
+		get_property(lexilla_license TARGET webview
+			PROPERTY WEBVIEW_LEXILLA_LICENSE)
+		add_custom_command(TARGET "${target}" POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				"${scintilla_runtime}" "$<TARGET_FILE_DIR:${target}>/Scintilla.dll"
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				"${lexilla_runtime}" "$<TARGET_FILE_DIR:${target}>/lexilla.dll"
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				"${scintilla_license}"
+				"$<TARGET_FILE_DIR:${target}>/Scintilla-LICENSE.txt"
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				"${lexilla_license}"
+				"$<TARGET_FILE_DIR:${target}>/Lexilla-LICENSE.txt"
+			VERBATIM)
+	endif()
 endfunction()

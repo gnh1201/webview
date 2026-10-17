@@ -30,9 +30,17 @@ endif()
 # solution and is built with MSBuild when enabled.
 option(WEBVIEW_ENABLE_CHAKRACORE "Enable the ChakraCore host scripting API" OFF)
 option(WEBVIEW_BUILD_CHAKRA_EXAMPLE "Build the ChakraCore control-script example" OFF)
+option(WEBVIEW_ENABLE_SCINTILLA_CONSOLE
+	"Use Scintilla and Lexilla for ChakraCore console JavaScript highlighting" ON)
 
 add_library(project_options INTERFACE)
 target_compile_features(project_options INTERFACE cxx_std_17)
+if(MSVC)
+	# Legacy EdgeHTML/WebView headers still include experimental coroutines.
+	# Recent MSVC STL releases turn their deprecation notice into an error.
+	target_compile_definitions(project_options INTERFACE
+		_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+endif()
 include(cmake/Sanitizers.cmake)
 enable_sanitizers(project_options)
 

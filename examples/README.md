@@ -59,10 +59,14 @@ executable.
 The runtime exposes `webview.navigate()`, `webview.eval()`,
 `webview.resizeTo()`, and `webview.on()` to the host script. `eval()` sends
 JavaScript to the embedded page and does not return its result. The console's
-Run button evaluates text in the host-side ChakraCore context. ChakraCore
-provides JavaScript only; it does not provide a browser DOM. MSHTML requires
-ATL in the Visual Studio C++ toolchain. Select the backend with the root
-project's `WEBVIEW_USE_EDGE` and `WEBVIEW_USE_MSHTML` options.
+Run Script button evaluates text in the host-side ChakraCore context; Clear
+removes the visible log output. The input editor uses Scintilla with Lexilla's
+JavaScript-capable lexer, a dark theme, and line numbers. CMake builds and
+deploys `Scintilla.dll` and `Lexilla.dll` with the application. Set
+`WEBVIEW_ENABLE_SCINTILLA_CONSOLE=OFF` to use the plain text input instead.
+ChakraCore provides JavaScript only; it does not provide a browser DOM. MSHTML
+requires ATL in the Visual Studio C++ toolchain. Select the backend with the
+root project's `WEBVIEW_USE_EDGE` and `WEBVIEW_USE_MSHTML` options.
 
 `mshtml` is a Windows-only example that selects the MSHTML backend, loads a
 local HTML page, demonstrates an HTML-to-native callback, and blocks external
