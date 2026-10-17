@@ -4,6 +4,7 @@
 #include "webview.hpp"
 #include "ChakraCore.h"
 
+#include <algorithm>
 #include <map>
 
 namespace wv {
@@ -12,8 +13,32 @@ class DebugConsole {
 public:
     using RunCallback = std::function<void(const std::wstring&)>;
 
+    DebugConsole() {
+        backgroundBrush_ = CreateSolidBrush(RGB(15, 19, 27));
+        editorBrush_ = CreateSolidBrush(RGB(18, 24, 34));
+        outputBrush_ = CreateSolidBrush(RGB(13, 17, 24));
+        textFont_ = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                FIXED_PITCH | FF_MODERN, L"Cascadia Mono");
+        if (!textFont_)
+            textFont_ = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                                    FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                    CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                    FIXED_PITCH | FF_MODERN, L"Consolas");
+        uiFont_ = CreateFontW(-16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                              DEFAULT_PITCH, L"Segoe UI");
+    }
+
     ~DebugConsole() {
         if (hwnd_ && IsWindow(hwnd_)) DestroyWindow(hwnd_);
+        if (backgroundBrush_) DeleteObject(backgroundBrush_);
+        if (editorBrush_) DeleteObject(editorBrush_);
+        if (outputBrush_) DeleteObject(outputBrush_);
+        if (textFont_) DeleteObject(textFont_);
+        if (uiFont_) DeleteObject(uiFont_);
     }
 
     bool create(RunCallback run) {
@@ -27,13 +52,13 @@ public:
         wc.lpfnWndProc = WindowProc;
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        wc.hbrBackground = backgroundBrush_;
         wc.lpszClassName = L"YAWWChakraDebugConsole";
         RegisterClassW(&wc);
         hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName,
-                                L"YAWW ChakraCore Console",
+                                L"ChakraCore Console | YAWW",
                                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 720, 420,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 820, 560,
                                 nullptr, nullptr, wc.hInstance, this);
         return hwnd_ != nullptr;
     }
@@ -47,6 +72,52 @@ public:
     }
 
 private:
+    static constexpr int kInputId = 1;
+    static constexpr int kRunId = 2;
+    static constexpr int kClearId = 3;
+    static constexpr int kOutputId = 4;
+    static constexpr COLORREF kTextColor = RGB(218, 226, 239);
+    static constexpr COLORREF kMutedColor = RGB(137, 153, 176);
+
+    void createChild(HWND hwnd, HWND& target, const wchar_t* className,
+                     const wchar_t* text, DWORD style, int id,
+                     HFONT font) {
+        target = CreateWindowExW(
+            std::wcscmp(className, L"EDIT") == 0 ? WS_EX_CLIENTEDGE : 0,
+            className, text,
+            WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+            GetModuleHandleW(nullptr), nullptr);
+        if (target && font) SendMessageW(target, WM_SETFONT,
+                                        reinterpret_cast<WPARAM>(font), TRUE);
+    }
+
+    static void drawButton(const DRAWITEMSTRUCT* item) {
+        const bool pressed = (item->itemState & ODS_SELECTED) != 0;
+        const bool run = item->CtlID == kRunId;
+        const COLORREF fill = run
+            ? (pressed ? RGB(43, 113, 190) : RGB(52, 132, 218))
+            : (pressed ? RGB(47, 59, 77) : RGB(34, 43, 57));
+        HBRUSH brush = CreateSolidBrush(fill);
+        FillRect(item->hDC, &item->rcItem, brush);
+        DeleteObject(brush);
+        HFONT font = reinterpret_cast<HFONT>(SendMessageW(
+            item->hwndItem, WM_GETFONT, 0, 0));
+        HGDIOBJ oldFont = font ? SelectObject(item->hDC, font) : nullptr;
+        SetBkMode(item->hDC, TRANSPARENT);
+        SetTextColor(item->hDC, RGB(245, 248, 252));
+        wchar_t label[32]{};
+        GetWindowTextW(item->hwndItem, label, 32);
+        DrawTextW(item->hDC, label, -1, const_cast<RECT*>(&item->rcItem),
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (item->itemState & ODS_FOCUS) {
+            RECT focus = item->rcItem;
+            InflateRect(&focus, -4, -4);
+            DrawFocusRect(item->hDC, &focus);
+        }
+        if (oldFont) SelectObject(item->hDC, oldFont);
+    }
+
     void appendToOutput(const std::wstring& line) {
         if (!output_) return;
         const int end = GetWindowTextLengthW(output_);
@@ -68,24 +139,31 @@ private:
         }
         if (!self) return DefWindowProcW(hwnd, message, wparam, lparam);
         switch (message) {
+            case WM_GETMINMAXINFO: {
+                auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
+                limits->ptMinTrackSize.x = 620;
+                limits->ptMinTrackSize.y = 450;
+                return 0;
+            }
             case WM_CREATE:
-                self->output_ = CreateWindowExW(
-                    WS_EX_CLIENTEDGE, L"EDIT", L"",
-                    WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE |
-                        ES_AUTOVSCROLL | ES_READONLY,
-                    8, 8, 680, 280, hwnd, nullptr, GetModuleHandleW(nullptr),
-                    nullptr);
-                self->input_ = CreateWindowExW(
-                    WS_EX_CLIENTEDGE, L"EDIT", L"",
-                    WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL,
-                    8, 296, 570, 72, hwnd,
-                    reinterpret_cast<HMENU>(1), GetModuleHandleW(nullptr),
-                    nullptr);
-                CreateWindowW(L"BUTTON", L"Run",
-                              WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                              588, 296, 100, 32, hwnd,
-                              reinterpret_cast<HMENU>(2),
-                              GetModuleHandleW(nullptr), nullptr);
+                self->createChild(hwnd, self->header_, L"STATIC",
+                                  L"CHAKRACORE  /  HOST SCRIPT RUNTIME",
+                                  SS_LEFT | SS_CENTERIMAGE, 5, self->uiFont_);
+                self->createChild(hwnd, self->hint_, L"STATIC",
+                                  L"Run JavaScript in the host context. Logs and errors appear below.",
+                                  SS_LEFT | SS_CENTERIMAGE, 6, self->uiFont_);
+                self->createChild(hwnd, self->output_, L"EDIT", L"",
+                                  WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL |
+                                      ES_READONLY | ES_NOHIDESEL,
+                                  kOutputId, self->textFont_);
+                self->createChild(hwnd, self->input_, L"EDIT", L"",
+                                  WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL |
+                                      ES_WANTRETURN,
+                                  kInputId, self->textFont_);
+                self->createChild(hwnd, self->runButton_, L"BUTTON", L"Run Script",
+                                  BS_OWNERDRAW, kRunId, self->uiFont_);
+                self->createChild(hwnd, self->clearButton_, L"BUTTON", L"Clear",
+                                  BS_OWNERDRAW, kClearId, self->uiFont_);
                 if (self->output_) {
                     for (const auto& line : self->pendingLines_)
                         self->appendToOutput(line);
@@ -95,15 +173,56 @@ private:
             case WM_SIZE: {
                 const int width = LOWORD(lparam);
                 const int height = HIWORD(lparam);
-                MoveWindow(self->output_, 8, 8, width - 16, height - 124, TRUE);
-                MoveWindow(self->input_, 8, height - 108, width - 128, 72, TRUE);
-                MoveWindow(GetDlgItem(hwnd, 2), width - 108, height - 108,
-                           100, 32, TRUE);
+                constexpr int pad = 18;
+                const int outputTop = 78;
+                const int commandHeight = 100;
+                const int outputHeight = (std::max)(160, height - 226);
+                MoveWindow(self->header_, pad, 14, width - pad * 2, 28, TRUE);
+                MoveWindow(self->hint_, pad, 43, width - pad * 2, 22, TRUE);
+                MoveWindow(self->output_, pad, outputTop, width - pad * 2,
+                           outputHeight, TRUE);
+                const int commandTop = outputTop + outputHeight + 12;
+                MoveWindow(self->input_, pad, commandTop, width - 166,
+                           commandHeight, TRUE);
+                MoveWindow(self->runButton_, width - 132, commandTop, 114, 42,
+                           TRUE);
+                MoveWindow(self->clearButton_, width - 132, commandTop + 50,
+                           114, 38, TRUE);
                 return 0;
             }
+            case WM_ERASEBKGND: {
+                RECT rect{};
+                GetClientRect(hwnd, &rect);
+                FillRect(reinterpret_cast<HDC>(wparam), &rect,
+                         self->backgroundBrush_);
+                return 1;
+            }
+            case WM_CTLCOLORSTATIC: {
+                HDC dc = reinterpret_cast<HDC>(wparam);
+                SetTextColor(dc, reinterpret_cast<HWND>(lparam) == self->hint_
+                        ? kMutedColor : kTextColor);
+                SetBkColor(dc, RGB(15, 19, 27));
+                return reinterpret_cast<LRESULT>(self->backgroundBrush_);
+            }
+            case WM_CTLCOLOREDIT: {
+                HDC dc = reinterpret_cast<HDC>(wparam);
+                const HWND control = reinterpret_cast<HWND>(lparam);
+                const bool output = control == self->output_;
+                SetTextColor(dc, output ? RGB(190, 205, 222) : kTextColor);
+                SetBkColor(dc, output ? RGB(13, 17, 24) : RGB(18, 24, 34));
+                return reinterpret_cast<LRESULT>(output ? self->outputBrush_
+                                                        : self->editorBrush_);
+            }
+            case WM_DRAWITEM:
+                drawButton(reinterpret_cast<DRAWITEMSTRUCT*>(lparam));
+                return TRUE;
             case WM_COMMAND:
-                if (LOWORD(wparam) == 2) {
+                if (LOWORD(wparam) == kRunId) {
                     self->executeInput();
+                    return 0;
+                }
+                if (LOWORD(wparam) == kClearId) {
+                    SetWindowTextW(self->output_, L"");
                     return 0;
                 }
                 break;
@@ -111,6 +230,10 @@ private:
                 self->hwnd_ = nullptr;
                 self->output_ = nullptr;
                 self->input_ = nullptr;
+                self->header_ = nullptr;
+                self->hint_ = nullptr;
+                self->runButton_ = nullptr;
+                self->clearButton_ = nullptr;
                 return 0;
         }
         return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -127,6 +250,15 @@ private:
     HWND hwnd_ = nullptr;
     HWND output_ = nullptr;
     HWND input_ = nullptr;
+    HWND header_ = nullptr;
+    HWND hint_ = nullptr;
+    HWND runButton_ = nullptr;
+    HWND clearButton_ = nullptr;
+    HBRUSH backgroundBrush_ = nullptr;
+    HBRUSH editorBrush_ = nullptr;
+    HBRUSH outputBrush_ = nullptr;
+    HFONT textFont_ = nullptr;
+    HFONT uiFont_ = nullptr;
     RunCallback run_;
     std::vector<std::wstring> pendingLines_;
 };
