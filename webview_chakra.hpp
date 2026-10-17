@@ -352,6 +352,11 @@ private:
                     return 0;
                 }
                 break;
+            case WM_CLOSE:
+                // Keep the controls alive so logs and the current script are
+                // still present when the console is opened again.
+                ShowWindow(hwnd, SW_HIDE);
+                return 0;
             case WM_DESTROY:
                 self->hwnd_ = nullptr;
                 self->output_ = nullptr;
@@ -552,7 +557,9 @@ private:
             // the public host API methods begin at arguments[1].
             return self->invoke(method, count > 0 ? args + 1 : nullptr,
                                 count > 0 ? count - 1 : 0);
-        } catch (const winrt::hresult_error& error) {
+        }
+#if defined(WEBVIEW_WIN)
+        catch (const winrt::hresult_error& error) {
             self->console_.append(
                 L"WebView operation failed (HRESULT 0x" +
                 formatHresult(static_cast<unsigned long>(error.code().value)) +
@@ -560,7 +567,9 @@ private:
             JsValueRef undefined = nullptr;
             JsGetUndefinedValue(&undefined);
             return undefined;
-        } catch (...) {
+        }
+#endif
+        catch (...) {
             self->console_.append(L"A native webview operation failed.");
             JsValueRef undefined = nullptr;
             JsGetUndefinedValue(&undefined);
@@ -568,6 +577,7 @@ private:
         }
     }
 
+#if defined(WEBVIEW_WIN)
     static std::wstring formatHresult(unsigned long value) {
         static constexpr wchar_t digits[] = L"0123456789ABCDEF";
         std::wstring result(8, L'0');
@@ -577,6 +587,7 @@ private:
         }
         return result;
     }
+#endif
 
     void addMethod(JsValueRef object, const wchar_t* name, Method method) {
         const uintptr_t encoded = reinterpret_cast<uintptr_t>(this) |
