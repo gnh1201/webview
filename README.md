@@ -1,16 +1,16 @@
 # YAWW (Yet Another Windows WebView)
 
-[![Discord chat](https://img.shields.io/discord/359930650330923008?logo=discord&utm_source=welsonjs)](https://discord.gg/XKG5CjtXEj?utm_source=welsonjs)
+[![Discord chat](https://img.shields.io/discord/359930650330923008?logo=discord&utm_source=yaww)](https://discord.gg/XKG5CjtXEj?utm_source=yaww)
 
 YAWW (Yet Another Windows WebView) is a small C++ library focused on embedding web content in Windows applications. It provides backends for Microsoft Edge WebView2 (Chromium), EdgeHTML (legacy Edge), and MSHTML (Trident). The existing C++ API, header, and build identifiers retain their `webview` names.
 
 YAWW draws inspiration from these projects and tools:
 
-- [MichaelKim's webview](https://github.com/MichaelKim/webview) (MIT license) as the project's starting point and API foundation.
-- [zerge's webview](https://github.com/webview/webview) for its cross-platform WebView approach.
-- [litehtml](https://github.com/litehtml/litehtml) and the [Gumbo parser](https://codeberg.org/gumbo-parser/gumbo-parser) for HTML parsing ideas.
-- Microsoft's [mshta HTML Application host](https://learn.microsoft.com/en-us/previous-versions/ms536496%28v%3Dvs.85%29) for the HTA hosting model.
-- [Quark](https://github.com/jscherer92/Quark) for the idea of using [ChakraCore](https://github.com/chakra-core/ChakraCore) as a host-side layer separate from the HTML rendering engine.
+- [MichaelKim's webview](https://github.com/MichaelKim/webview?utm_source=yaww) (MIT license) as the project's starting point and API foundation.
+- [zerge's webview](https://github.com/webview/webview?utm_source=yaww) for its cross-platform WebView approach.
+- [litehtml](https://github.com/litehtml/litehtml?utm_source=yaww) and the [Gumbo parser](https://codeberg.org/gumbo-parser/gumbo-parser?utm_source=yaww) for HTML parsing ideas.
+- Microsoft's [mshta HTML Application host](https://learn.microsoft.com/en-us/previous-versions/ms536496%28v%3Dvs.85%29?utm_source=yaww) for the HTA hosting model.
+- [Quark](https://github.com/jscherer92/Quark?utm_source=yaww) for the idea of using [ChakraCore](https://github.com/chakra-core/ChakraCore?utm_source=yaww) as a host-side layer separate from the HTML rendering engine.
 
 Recent development and testing have focused on Windows. macOS and Linux backends remain in the source, but have not been tested since the versions noted below and are not part of the current support matrix.
 
@@ -30,7 +30,7 @@ The macOS WebKit backend was last listed as tested on macOS Mojave and Catalina.
 
 ## WelsonJS and MSHTML
 
-MSHTML support was added to help [WelsonJS](https://github.com/gnh1201/welsonjs), a lightweight Windows JavaScript framework for application development and industrial-system automation, maintain compatibility with existing industrial systems and their web-based interfaces. WelsonJS applications combine JavaScript (including transpiled languages) with HTML and CSS. The MSHTML backend provides access to the system's Trident engine for environments where compatibility with existing applications and workflows is important.
+MSHTML support was added to help [WelsonJS](https://github.com/gnh1201/welsonjs?utm_source=yaww), a lightweight Windows JavaScript framework for application development and industrial-system automation, maintain compatibility with existing industrial systems and their web-based interfaces. WelsonJS applications combine JavaScript (including transpiled languages) with HTML and CSS. The MSHTML backend provides access to the system's Trident engine for environments where compatibility with existing applications and workflows is important.
 
 The MSHTML implementation includes balanced COM/OLE initialization and cleanup, navigation and new-window event handling, defensive initialization and teardown, and JavaScript/native callback support.
 
@@ -43,9 +43,9 @@ See [Build Steps](docs/build.md) for backend requirements and configuration. For
 Windows example executables embed YAWW file and product descriptions and
 version metadata. Set the release version in [`cmake/Version.cmake`](cmake/Version.cmake).
 
-The MCP stdio API uses [nlohmann/json](https://github.com/nlohmann/json) for JSON-RPC parsing and serialization. CMake uses an installed 3.12.0+ package or fetches that release during configuration.
+The MCP stdio API uses [nlohmann/json](https://github.com/nlohmann/json?utm_source=yaww) for JSON-RPC parsing and serialization. CMake uses an installed 3.12.0+ package or fetches that release during configuration.
 
-[ChakraCore](https://github.com/chakra-core/ChakraCore) can be enabled as an optional host-side script runtime shared by the
+[ChakraCore](https://github.com/chakra-core/ChakraCore?utm_source=yaww) can be enabled as an optional host-side script runtime shared by the
 Windows WebView2, EdgeHTML, and MSHTML backends. Configure with
 `-DWEBVIEW_ENABLE_CHAKRACORE=ON` to build the current ChakraCore source and
 expose `wv::ChakraCore` through `webview.hpp`. Choose whether to start it, the
@@ -56,8 +56,8 @@ the window title bar's system menu can open the console later.
 Applications using CMake should call `webview_deploy_chakracore(target)` to
 copy the runtime DLL beside their executable. See the [ChakraCore example
 instructions](examples/README.md#yaww-examples).
-The debug console uses [Scintilla](https://www.scintilla.org/) and
-[Lexilla](https://www.scintilla.org/Lexilla.html) for JavaScript syntax
+The debug console uses [Scintilla](https://www.scintilla.org/?utm_source=yaww) and
+[Lexilla](https://www.scintilla.org/Lexilla.html?utm_source=yaww) for JavaScript syntax
 highlighting by default; set `WEBVIEW_ENABLE_SCINTILLA_CONSOLE=OFF` to use a
 plain text input editor.
 
@@ -73,7 +73,7 @@ Examples are in [`examples/`](examples/):
 
 YAWW handles HTML `<title>` and `<link rel="icon">` elements as common
 features. It parses the document head with
-[Gumbo](https://codeberg.org/gumbo-parser/gumbo-parser) and updates the native
+[Gumbo](https://codeberg.org/gumbo-parser/gumbo-parser?utm_source=yaww) and updates the native
 window title and icon across backends;
 Windows local files are also parsed before navigation, including the temporary
 HTML copy used for HTA files.
@@ -150,21 +150,21 @@ The library supports HTTP(S), local `file:///` URLs, and inline `data:` URLs. Ed
 YAWW is licensed under GNU GPL version 3. The original MichaelKim/webview
 project is identified as MIT-licensed in the inspiration list above. The
 verbatim GPLv3 text is in [LICENSE](LICENSE), from the
-[Free Software Foundation](https://www.gnu.org/licenses/gpl-3.0.txt).
+[Free Software Foundation](https://www.gnu.org/licenses/gpl-3.0.txt?utm_source=yaww).
 
 ## Screenshots
 
 MSHTML compatibility tested in an `mshta`-style industrial application scenario.
 
-![YAWW running an industrial application test page in the MSHTML engine](https://catswords.blob.core.windows.net/welsonjs/images/screenshot9.png?utm_source=welsonjs)
+![YAWW running an industrial application test page in the MSHTML engine](https://catswords.blob.core.windows.net/welsonjs/images/screenshot9.png?utm_source=yaww)
 
 MSHTML compatibility test confirming that the UI Components page renders correctly in an `mshta`-style industrial application scenario.
 
-![UI Components page rendered by YAWW's MSHTML engine](https://catswords.blob.core.windows.net/welsonjs/images/screenshot10.png?utm_source=welsonjs)
+![UI Components page rendered by YAWW's MSHTML engine](https://catswords.blob.core.windows.net/welsonjs/images/screenshot10.png?utm_source=yaww)
 
 ChakraCore Console example showing host-side JavaScript control of the webview.
 
-![YAWW ChakraCore Console controlling a webview](https://catswords.blob.core.windows.net/welsonjs/images/screenshot11.png?utm_source=welsonjs)
+![YAWW ChakraCore Console controlling a webview](https://catswords.blob.core.windows.net/welsonjs/images/screenshot11.png?utm_source=yaww)
 
 ## Contact
 
